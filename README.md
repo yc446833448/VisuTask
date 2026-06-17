@@ -13,18 +13,22 @@
 
 **VisuTask** 是一款智能化的 GUI 流程自动化桌面应用，采用 **Wails（Go 后端 + React 前端）** 框架打包为单一原生可执行文件。它通过 **OCR（光学字符识别）** 实时感知屏幕内容，结合 **AI Agent 任务规划能力** 将复杂操作分解为可执行的原子步骤，最终实现对任意可视化界面的端到端自动化操作。
 
-与传统 RPA 不同，VisuTask **不需要用户拖拽流程图或编写脚本**。只需用自然语言描述任务，Agent 就会逐步模拟演示每个操作（截图 + 标注目标区域），用户逐条确认后自动生成可复用的任务模板。整个过程像"教 AI 做一次操作"——演示一遍，它就能反复自动执行。
+与传统 RPA 不同，VisuTask **不需要用户拖拽流程图或编写脚本**。只需用自然语言描述操作，Agent 逐步模拟演示每个步骤（截图 + 标注目标区域），用户确认后保存为**脚本模板**。脚本可绑定到不同窗口创建**执行任务**，多个任务**并发运行**（普通用户最多 3 个，VIP 最高 10 个）。整个过程像"教 AI 做一次操作"——演示一遍，它就能在多个窗口上反复自动执行。
 
 ### 核心理念
 
 ```
-用户描述任务 → Agent 规划步骤 → 逐步模拟确认 → 自动生成文档 → 正式执行验证
+用户描述操作 → Agent 生成脚本 → 逐步模拟确认 → 保存脚本模板
+                                                     │
+                              创建任务（绑定脚本+窗口句柄+参数）
+                                                     │
+                              多任务并发执行（最多 10~15 个）
 ```
 
-- **📝 说**：用自然语言描述要完成的任务，无需学习任何编排工具
-- **👀 看**：Agent 截图标注每一步的操作目标，让用户直观确认
-- **🧠 想**：AI Agent 理解意图，将高层任务分解为可执行的原子步骤
-- **🖐️ 动**：按确认后的步骤模拟键鼠操作，实时验证每步结果
+- **📝 说**：用自然语言描述要完成的操作，Agent 自动生成脚本
+- **👀 看**：Agent 截图标注每一步的操作目标，用户逐条确认
+- **🚀 跑**：脚本绑定到不同窗口，多个任务同时并发执行
+- **🧠 智**：AI Agent 理解意图、规划步骤、验证结果、异常恢复
 
 ### 为什么选择桌面应用？
 
@@ -49,12 +53,12 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │              🎨 React 前端 (原生 WebView)                │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ │  │
-│  │  │ 任务创建  │ │ 实时预览  │ │ 执行日志  │ │ 任务列表   │ │  │
-│  │  │Designer  │ │Live View │ │   Logs   │ │ TaskList  │ │  │
+│  │  │ 脚本创建  │ │ 任务管理  │ │ 执行监控  │ │ 脚本库    │ │  │
+│  │  │Designer  │ │  Tasks   │ │ Monitor  │ │ Scripts  │ │  │
 │  │  └──────────┘ └──────────┘ └──────────┘ └───────────┘ │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐   │  │
-│  │  │ 定时调度  │ │ 录制回放  │ │ 执行监控面板          │   │  │
-│  │  │Scheduler │ │ Recorder │ │  实时进度+截图流       │   │  │
+│  │  │ 定时调度  │ │ 实时预览  │ │ 执行日志              │   │  │
+│  │  │Scheduler │ │Live View │ │   Logs              │   │  │
 │  │  └──────────┘ └──────────┘ └──────────────────────┘   │  │
 │  └───────────────────────┬────────────────────────────────┘  │
 │                          │  Wails IPC (Bindings)              │
@@ -110,12 +114,13 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 | **任务解析器 (Parser)** | 将自然语言描述的任务转为结构化指令 | Go + LLM API |
 | **计划生成器 (Planner)** | 根据屏幕状态和任务目标规划操作步骤序列 | Agent 推理链 / 分层规划 |
 | **模拟演示器 (Simulator)** | 逐步模拟操作（截图标注目标，不真正执行），供用户确认 | 截图 + OCR 标注 + 高亮覆盖 |
+| **并发管理器 (Concurrency)** | 多任务并发执行，槽位分配与上限控制 | Go channel + mutex |
 | **OCR 引擎** | 识别屏幕文字及其位置坐标（返回给前端标注） | Tesseract CGo / PaddleOCR gRPC |
 | **控件检测** | 定位按钮、输入框、下拉菜单等可交互元素 | GoCV (OpenCV) / 边缘检测 / 轮廓分析 |
 | **屏幕截图** | 高性能屏幕捕获，实时帧推送到前端预览 | Windows GDI / macOS CGWindow / X11 SHM |
 | **动作执行器** | 鼠标点击、键盘输入、拖拽等底层操作 | robotgo / Win32 user32.dll / XTest / CGEvent |
 | **执行监控 (Monitor)** | 每步操作后截图对比 + OCR 校验，判断成功/失败 | GoCV 直方图对比 + OCR diff |
-| **LLM 网关** | 统一管理多模型（云端 + 本地），自动 fallback | Go HTTP Client + 速率限制 |
+| **LLM 网关** | 统一管理多模型（云端 + 本地），自动 fallback | Go HTTP Client + 速率限制（构建时环境变量注入配置） |
 | **任务调度** | 定时触发任务、后台静默执行 | robfig/cron |
 | **全局快捷键** | 用户可注册全局热键，一键触发任务 | robotgo / 系统级 Hook |
 | **本地存储** | 任务模板、执行历史、配置的持久化 | SQLite (GORM) |
@@ -123,36 +128,47 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 ### 数据流
 
 ```
-[用户] 在 VisuTask 桌面窗口中用自然语言描述任务
-   │
-   ▼  (Wails IPC: Go 函数调用)
-[Parser] 接收自然语言 → 调用 LLM 解析意图
-   │
-   ▼
-[Planner] 截取当前屏幕 → OCR 识别 → 结合意图生成操作计划
-   │
-   ▼  (Wails Events: Go → React 实时状态推送)
-[React 前端] 展示执行计划的步骤列表，等待用户确认
-   │
-   ▼  (用户点击"模拟执行")
-[Agent] 逐步模拟演示操作序列
-   │
-   ├── 每步：截图 → OCR 标注 → 高亮目标区域 → 暂停等待确认
-   ├── 用户可确认、修改、跳过或插入新步骤
-   ├── Wails Events 实时推送当前步骤截图和 OCR 结果到前端
-   │
-   ▼  (用户确认全部步骤)
-[保存] 结构化任务模板存入 SQLite，可复用、可编辑
-   │
-   ▼  (用户点击"正式执行")
-[Executor] 按已确认的步骤序列自动执行
-   │
-   ├── 每步执行前截图 → OCR 定位目标 → 执行键鼠操作 → 截图验证结果
-   ├── Wails Events 实时推送执行进度、当前步骤截图到前端
-   ├── 失败时自动重试 / 回退 / 提示用户介入
+═══ 阶段一：创建脚本 ═══
+
+[用户] 用自然语言描述要自动化的操作
    │
    ▼
-[完成] 执行记录存入 SQLite → 前端展示结果报告和截图回放
+[Parser] 调用 LLM 解析意图
+   │
+   ▼
+[Planner] 截取屏幕 → OCR → 生成操作计划
+   │
+   ▼
+[Simulator] 逐步模拟演示（截图标注目标，不执行）
+   │
+   ├── 用户确认/修改/跳过/插入步骤
+   │
+   ▼
+[保存] 脚本模板存入 SQLite，可复用
+
+═══ 阶段二：创建任务 ═══
+
+[用户] 选择脚本 → 绑定窗口句柄 → 配置参数 → 设置触发方式
+   │
+   ▼
+[保存] 任务配置存入 SQLite（同一脚本可创建多个任务）
+
+═══ 阶段三：并发执行 ═══
+
+[用户] 启动多个任务（上限：普通用户 3 / VIP 最高 10）
+   │
+   ▼
+[Concurrency] 分配执行槽位，检查并发上限
+   │
+   ▼
+[Executor] 每个任务在绑定的窗口上独立执行
+   │
+   ├── 每步：定位窗口 → OCR → 键鼠操作 → 截图验证
+   ├── Wails Events 实时推送每个任务的进度
+   ├── 失败时 Recovery 介入（重试/回退/人工介入）
+   │
+   ▼
+[完成] 执行记录存入 SQLite → 前端展示结果报告
 ```
 
 ---
@@ -248,7 +264,7 @@ VisuTask:
 | **屏幕捕获** | screenshot + GDI/X11/CG | 截图帧获取，并行推前端 |
 | **数据库** | SQLite (GORM) | 嵌入式，零配置，单文件存储 |
 | **任务调度** | robfig/cron | 定时任务，毫秒级精度 |
-| **LLM 集成** | 自建 LLM Gateway | 统一路由 OpenAI / Claude / Ollama 本地模型 |
+| **LLM 集成** | 自建 LLM Gateway | 内部集成，构建时通过环境变量注入配置 |
 | **配置** | Viper | YAML 配置文件 |
 | **日志** | zap | 结构化高性能日志 |
 | **构建** | Wails build + NSIS (Win) / DMG (Mac) / AppImage (Linux) | |
@@ -276,17 +292,18 @@ VisuTask/
 │       ├── App.tsx                 # 根组件
 │       ├── main.tsx                # 前端入口
 │       ├── pages/
-│       │   ├── Dashboard/          # 仪表盘首页（任务概览、统计）
-│       │   ├── Designer/           # 任务创建向导（Agent 模拟 + 确认）
-│       │   ├── Recorder/           # 操作录制器
-│       │   ├── TaskList/           # 任务列表管理
+│       │   ├── Dashboard/          # 仪表盘首页（概览、并发状态、统计）
+│       │   ├── ScriptNew/          # 脚本创建向导（Agent 模拟 + 确认）
+│       │   ├── Scripts/            # 脚本库管理
+│       │   ├── Tasks/              # 任务管理（绑定脚本+句柄+并发）
+│       │   ├── Monitor/            # 执行监控面板（实时并发状态）
 │       │   ├── ExecutionLog/       # 执行日志与截图回放
 │       │   ├── ScreenLive/         # 实时屏幕预览
-│       │   └── Settings/           # 系统设置（LLM / OCR / 快捷键）
+│       │   └── Settings/           # 系统设置（账户/钱包/快捷键/外观/关于）
 │       ├── components/
-│       │   ├── TaskWizard/         # 任务创建向导（步骤确认面板）
+│       │   ├── TaskWizard/         # 脚本创建向导（步骤确认面板）
+│       │   ├── TaskCard/           # 执行监控任务卡片
 │       │   ├── ScreenViewer/       # 屏幕查看器（标注 OCR 结果）
-│       │   ├── StepRecorder/       # 步骤录制悬浮窗
 │       │   ├── ResultDiff/         # 执行前后截图对比
 │       │   └── StatusBar/          # 底部状态栏
 │       ├── hooks/
@@ -328,10 +345,13 @@ VisuTask/
 │   │   └── cron.go                 # Cron 调度管理
 │   ├── hotkey/                     # 全局快捷键
 │   │   └── hook.go                 # 系统级热键注册
+│   ├── concurrency/                # 并发管理
+│   │   └── manager.go              # 槽位分配/释放 + 上限控制
 │   ├── model/                      # 数据模型
-│   │   ├── task.go                 # 任务定义
-│   │   ├── step.go                 # 操作步骤
-│   │   └── execution.go            # 执行记录
+│   │   ├── script.go               # 脚本定义
+│   │   ├── task.go                 # 任务定义（脚本+句柄+参数）
+│   │   ├── execution.go            # 执行记录
+│   │   └── user.go                 # 用户 + VIP 等级
 │   └── store/                      # 持久化层
 │       ├── sqlite.go               # SQLite GORM 初始化
 │       └── repository.go           # 仓储接口
@@ -375,13 +395,14 @@ VisuTask/
 - [ ] 步骤级截图验证 + 自动重试/回退机制
 - [ ] 前端实时执行进度展示（步骤动画 + 截图流）
 
-### Phase 3 — 智能任务创建
-- [ ] 任务创建向导：Agent 逐步模拟演示 + 用户确认交互
+### Phase 3 — 脚本与任务系统
+- [ ] 脚本创建向导：Agent 逐步模拟演示 + 用户确认交互
 - [ ] 截图标注高亮：OCR 识别结果 + 目标区域可视化标注
-- [ ] 步骤编辑器：用户可修改、插入、删除、跳过步骤
-- [ ] 任务模板保存：结构化 JSON 持久化，支持编辑和复用
-- [ ] 操作录制：记录用户键鼠操作，自动生成任务步骤
-- [ ] 录制回放：按录制轨迹回放并 OCR 校验
+- [ ] 脚本库管理：CRUD、复制、版本记录
+- [ ] 任务配置：绑定脚本 + 窗口句柄 + 参数 + 触发方式
+- [ ] 并发执行：多任务同时运行，槽位管理
+- [ ] 用户等级：普通用户 3 并发 / VIP 1-5 级（5-10 并发）
+- [ ] 执行监控面板：卡片式实时状态 + 日志流
 
 ### Phase 4 — 生产增强
 - [ ] 定时任务：Cron 后台静默执行 + 系统托盘驻留
@@ -668,68 +689,44 @@ function TaskWizard() {
 }
 ```
 
-#### 结构化任务模板（Agent 自动生成）
+#### 脚本模板（Agent 自动生成）
+
+```json
+{
+  "id": "script_001",
+  "name": "数据录入 CRM",
+  "description": "将 Excel 客户信息逐条录入到网页 CRM 系统",
+  "variables": {
+    "loopCount": "100",
+    "startRow": "2"
+  },
+  "steps": [
+    { "id": 1, "action": "click",  "target": "新建按钮",    "targetOCR": "新建",   "confidence": 0.95 },
+    { "id": 2, "action": "input",  "target": "姓名输入框",   "targetOCR": "姓名",   "value": "{{name}}", "confidence": 0.92 },
+    { "id": 3, "action": "input",  "target": "电话输入框",   "targetOCR": "电话",   "value": "{{phone}}", "confidence": 0.91 },
+    { "id": 4, "action": "click",  "target": "保存按钮",    "targetOCR": "保存",   "confidence": 0.98 },
+    { "id": 5, "action": "verify", "target": "保存成功提示",  "targetOCR": "保存成功", "timeout": 5000, "confidence": 0.88 }
+  ],
+  "createdAt": "2026-06-17T10:30:00Z"
+}
+```
+
+#### 执行任务（绑定脚本 + 窗口）
 
 ```json
 {
   "id": "task_001",
-  "name": "数据录入",
-  "description": "将客户信息从 Excel 录入到 CRM 系统",
-  "trigger": {
-    "type": "manual",
-    "hotkey": "Ctrl+Shift+D"
+  "name": "数据录入 CRM — 批次A",
+  "scriptId": "script_001",
+  "scriptName": "数据录入 CRM",
+  "windowHandle": "0x001A0F3C",
+  "windowTitle": "Excel - 客户数据.xlsx",
+  "parameters": {
+    "loopCount": "50",
+    "startRow": "2"
   },
-  "variables": {
-    "name": "张三",
-    "phone": "13800138000"
-  },
-  "steps": [
-    {
-      "id": 1,
-      "action": "click",
-      "target": "新建按钮",
-      "targetOCR": "新建",
-      "confidence": 0.95,
-      "confirmed": true
-    },
-    {
-      "id": 2,
-      "action": "input",
-      "target": "姓名输入框",
-      "targetOCR": "姓名",
-      "value": "{{name}}",
-      "confidence": 0.92,
-      "confirmed": true
-    },
-    {
-      "id": 3,
-      "action": "input",
-      "target": "电话输入框",
-      "targetOCR": "电话",
-      "value": "{{phone}}",
-      "confidence": 0.91,
-      "confirmed": true
-    },
-    {
-      "id": 4,
-      "action": "click",
-      "target": "保存",
-      "targetOCR": "保存",
-      "confidence": 0.98,
-      "confirmed": true
-    },
-    {
-      "id": 5,
-      "action": "verify",
-      "target": "保存成功",
-      "targetOCR": "保存成功",
-      "timeout": 5000,
-      "confidence": 0.88,
-      "confirmed": true
-    }
-  ],
-  "createdAt": "2026-06-17T10:30:00Z",
-  "updatedAt": "2026-06-17T10:30:00Z"
+  "trigger": { "type": "manual" },
+  "status": "running"
 }
 ```
 

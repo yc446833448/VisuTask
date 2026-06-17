@@ -14,7 +14,7 @@ import type { ChatMessage } from '@/types'
 export default function ScriptNew() {
   const [messages, setMessages] = useState<ChatMessage[]>(mockChatMessages)
   const [input, setInput] = useState('')
-  const [scriptContent, setScriptContent] = useState(mockScriptMarkdown)
+  const [scriptContent] = useState(mockScriptMarkdown)
 
   const handleSend = () => {
     if (!input.trim()) return

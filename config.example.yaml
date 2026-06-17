@@ -1,0 +1,74 @@
+# VisuTask 配置文件
+# 复制到 ~/.visutask/config.yaml 并填入实际值
+
+# ─── LLM 配置 ───
+llm:
+  # 主模型提供商 (anthropic / openai / ollama)
+  primary: anthropic
+
+  # Anthropic Claude
+  anthropic:
+    api_key: ""                    # 必填: Anthropic API Key
+    base_url: ""                   # 可选: 自定义 API 地址
+    model: "claude-sonnet-4-20250514"
+
+  # OpenAI / 兼容 API
+  openai:
+    api_key: ""                    # OpenAI API Key
+    base_url: ""                   # 自定义 API 地址 (如 Azure)
+    model: "gpt-4o"
+
+  # Ollama 本地模型
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "llama3"
+
+  # Fallback 顺序 (主 → 备)
+  fallback_order:
+    - anthropic
+    - openai
+    - ollama
+
+# ─── OCR 配置 ───
+ocr:
+  # 远端 OCR 服务
+  endpoint: ""                     # OCR 服务地址 (如 https://api.deepseek.com/v1/ocr)
+  api_key: ""                      # OCR API Key
+
+# ─── Agent 配置 ───
+agent:
+  # Agent Loop 最大步数
+  planner_max_steps: 20
+  executor_max_steps: 100
+  reviewer_max_steps: 10
+
+  # Tool 执行超时 (秒)
+  tool_timeout: 30
+
+  # Doom Loop 检测阈值 (连续重复次数)
+  doom_loop_threshold: 3
+
+  # 上下文窗口 (tokens)
+  context_window: 128000
+
+# ─── 重试策略 ───
+retry:
+  initial_delay_ms: 2000           # 首次重试延迟
+  max_delay_ms: 30000              # 最大延迟
+  backoff_factor: 2.0              # 退避倍数
+  max_retries: 5                   # 最大重试次数
+
+# ─── 并发控制 ───
+concurrency:
+  # 默认最大并发任务数 (VIP 用户通过数据库配置覆盖)
+  default_max: 3
+
+# ─── 脚本存储 ───
+scripts:
+  # 脚本文件保存目录 (默认 ~/.visutask/scripts)
+  directory: ""
+
+# ─── 数据库 ───
+database:
+  # SQLite 文件路径 (默认 ~/.visutask/visutask.db)
+  path: ""

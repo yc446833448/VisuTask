@@ -116,7 +116,7 @@ function TaskRow({ task, expanded, onToggle, onMonitor }: { task: Task; expanded
                     <span>{task.currentStep}/{task.totalSteps}</span>
                     <span>耗时 {task.duration}</span>
                   </div>
-                  <Progress value={task.progress} className="h-2" />
+                  <Progress value={task.progress ?? null} className="h-2" />
                 </div>
               )}
 

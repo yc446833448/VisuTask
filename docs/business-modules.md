@@ -52,20 +52,797 @@ internal/
 ## 1. Agent 调度核心 (`internal/agent/`)
 
 Agent 是系统的"大脑"，负责脚本的创建（解析、规划、模拟）和任务的执行。
+架构参考 OpenCode 的 Agent Loop 模式，适配为 GUI 自动化场景。
 
-### 模块划分
+### 1.1 模块总览
 
-| 文件 | 职责 | 对外接口 (Wails Binding) |
-|------|------|--------------------------|
-| `parser.go` | 自然语言 → 结构化意图 | `ParseIntent(description string) (*Intent, error)` |
-| `planner.go` | 意图 + 屏幕状态 → 操作计划 | `GeneratePlan(intent *Intent) (*ScriptPlan, error)` |
-| `simulator.go` | 单步模拟（截图标注，不执行） | `SimulateStep(plan *ScriptPlan, stepIndex int) (*StepSimulation, error)` |
-| `executor.go` | 按脚本步骤在指定窗口执行 | `ExecuteTask(taskID string) (*ExecutionResult, error)` |
-| `recovery.go` | 执行失败时的重试/回退/人工介入 | 内部使用 |
-| `memory.go` | 短期记忆 + 长期记忆 | 内部使用 |
-| `service.go` | Wails 绑定入口 | 前端调用的 API |
+```
+internal/agent/
+├── session.go       # Session 管理 —— Agent 运行实例
+├── loop.go          # Agent Loop —— while(true) 核心循环
+├── processor.go     # Stream Processor —— LLM 流式事件处理
+├── tool.go          # Tool 定义 + 注册表
+├── system_prompt.go # System Prompt 构建
+├── memory.go        # 上下文管理 + 压缩
+├── retry.go         # 重试策略 + 退避
+├── safety.go        # Doom Loop 检测 + 安全机制
+├── service.go       # Wails Binding 入口
+│
+├── tools/           # VisuTask 专用工具集
+│   ├── capture.go   # 截图工具
+│   ├── ocr.go       # OCR 识别工具
+│   ├── click.go     # 鼠标点击工具
+│   ├── type.go      # 键盘输入工具
+│   ├── hotkey.go    # 快捷键工具
+│   ├── scroll.go    # 滚动工具
+│   ├── wait.go      # 等待工具
+│   ├── verify.go    # 步骤验证工具
+│   ├── simulate.go  # 模拟演示工具（仅标注，不执行）
+│   ├── window.go    # 窗口管理工具
+│   └── locate.go    # 目标定位工具（OCR + 图像匹配）
+│
+└── agents/          # 内置 Agent 角色定义
+    ├── planner.go   # 规划 Agent —— 自然语言 → 步骤计划
+    ├── executor.go  # 执行 Agent —— 按脚本逐步执行
+    └── reviewer.go  # 审查 Agent —— 执行结果校验
+```
 
-### 脚本创建流程
+---
+
+### 1.2 Agent Loop 核心循环
+
+参考 OpenCode 的 `runLoop` 模式，核心是一个 `for` 循环驱动的多轮对话。
+
+```go
+// loop.go
+
+type Loop struct {
+    session     *Session
+    processor   *Processor
+    registry    *ToolRegistry
+    memory      *Memory
+    safety      *Safety
+    llm         *llm.Gateway
+    events      *EventBus
+}
+
+// Run Agent 主循环 —— 每轮: 加载上下文 → 调用 LLM → 处理工具 → 评估结果
+func (l *Loop) Run(ctx context.Context) error {
+    step := 0
+    for {
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        default:
+        }
+
+        // 1. 加载消息上下文（过滤已压缩的旧消息）
+        messages := l.memory.LoadMessages()
+
+        // 2. 检查上下文是否溢出 → 触发压缩
+        if l.memory.IsOverflow(messages) {
+            if err := l.memory.Compact(ctx, l.llm); err != nil {
+                return fmt.Errorf("compaction failed: %w", err)
+            }
+            continue
+        }
+
+        // 3. 解析当前 Agent 角色 + 可用工具集
+        agent := l.session.CurrentAgent()
+        tools := l.registry.ToolsForAgent(agent.Name)
+        system := l.buildSystemPrompt(agent)
+
+        // 4. 通知前端：新一轮开始
+        l.events.Emit(EventStepStarted, StepEvent{Step: step})
+
+        // 5. 流式调用 LLM，处理事件流
+        result, err := l.processor.Process(ctx, ProcessInput{
+            Messages: messages,
+            Tools:    tools,
+            System:   system,
+            Model:    agent.Model,
+        })
+        if err != nil {
+            // 重试判定
+            if l.retry.ShouldRetry(err) {
+                l.retry.Wait(ctx, err)
+                continue
+            }
+            return err
+        }
+
+        // 6. 评估结果，决定下一步
+        switch result.Outcome {
+        case OutcomeStop:
+            // Agent 完成，退出循环
+            l.events.Emit(EventCompleted, nil)
+            return nil
+
+        case OutcomeCompact:
+            // 上下文溢出，压缩后继续
+            l.memory.Compact(ctx, l.llm)
+            continue
+
+        case OutcomeContinue:
+            // 有工具调用，继续下一轮
+            step++
+
+            // Doom Loop 检测
+            if l.safety.IsDoomLoop(result.ToolCalls) {
+                l.events.Emit(EventDoomLoop, DoomLoopEvent{
+                    Tool:   result.ToolCalls[0].Name,
+                    Count:  l.safety.RepeatCount(),
+                })
+                // 等待用户确认后继续，或中止
+                if err := l.safety.WaitForConfirmation(ctx); err != nil {
+                    return err
+                }
+            }
+            continue
+        }
+    }
+}
+```
+
+### 循环退出条件
+
+| 条件 | 说明 |
+|------|------|
+| `OutcomeStop` | LLM 返回最终结果，无工具调用 |
+| `ctx.Done()` | 用户取消 / 超时 |
+| 最大步数 | 防止无限循环（默认 50 步） |
+| 不可重试错误 | 认证失败、参数错误等 |
+
+---
+
+### 1.3 Session 管理
+
+```go
+// session.go
+
+type Session struct {
+    ID          string
+    Type        SessionType       // ScriptCreation / TaskExecution
+    Agent       string            // 当前 Agent 角色
+    Model       string            // 当前 LLM 模型
+    Status      SessionStatus     // idle / busy / paused / completed / failed
+    CreatedAt   time.Time
+
+    // 运行时状态
+    cancel      context.CancelFunc
+    runState    *RunState         // 防止重复执行
+}
+
+type SessionType string
+const (
+    SessionScriptCreation SessionType = "script_creation"  // 创建脚本阶段
+    SessionTaskExecution SessionType = "task_execution"   // 执行任务阶段
+)
+
+// RunState 防止同一 Session 并发执行 Loop
+type RunState struct {
+    mu      sync.Mutex
+    running bool
+}
+
+func (r *RunState) EnsureRunning() (func(), error) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if r.running {
+        return nil, ErrSessionAlreadyRunning
+    }
+    r.running = true
+    return func() {
+        r.mu.Lock()
+        r.running = false
+        r.mu.Unlock()
+    }, nil
+}
+```
+
+---
+
+### 1.4 Tool 系统
+
+参考 OpenCode 的声明式 Tool 定义 + 注册表模式。
+
+#### Tool 定义
+
+```go
+// tool.go
+
+type Tool struct {
+    Name        string
+    Description string
+    Parameters  json.RawMessage   // JSON Schema
+    Execute     func(ctx context.Context, args json.RawMessage, tc *ToolContext) (*ToolResult, error)
+}
+
+type ToolContext struct {
+    SessionID   string
+    WindowHandle uintptr          // 绑定的目标窗口
+    Screenshot  []byte            // 最新截图（缓存）
+    OCRResults  []vision.OCRResult // 最新 OCR 结果（缓存）
+    Events      *EventBus
+}
+
+type ToolResult struct {
+    Content     string            // 文本结果（返回给 LLM）
+    Screenshot  []byte            // 截图（如有）
+    Annotation  []byte            // 标注图（如有）
+    Metadata    map[string]any    // 额外元数据
+}
+```
+
+#### Tool 注册表
+
+```go
+// tool.go
+
+type ToolRegistry struct {
+    tools    map[string]*Tool
+    agentMap map[string][]string   // agent name → tool names
+}
+
+func NewToolRegistry(v *vision.Engine, a *action.Engine, m *monitor.Checker) *ToolRegistry {
+    r := &ToolRegistry{
+        tools:    make(map[string]*Tool),
+        agentMap: make(map[string][]string),
+    }
+
+    // 注册所有工具
+    r.Register(NewCaptureTool(v))
+    r.Register(NewOCRTool(v))
+    r.Register(NewClickTool(a))
+    r.Register(NewTypeTool(a))
+    r.Register(NewHotkeyTool(a))
+    r.Register(NewScrollTool(a))
+    r.Register(NewWaitTool())
+    r.Register(NewVerifyTool(m))
+    r.Register(NewSimulateTool(v))
+    r.Register(NewWindowTool(a))
+    r.Register(NewLocateTool(v))
+
+    // 按 Agent 角色分配工具
+    r.agentMap["planner"]  = []string{"capture", "ocr", "locate", "window"}
+    r.agentMap["executor"] = []string{"capture", "ocr", "click", "type", "hotkey", "scroll", "wait", "verify", "locate", "window"}
+    r.agentMap["reviewer"] = []string{"capture", "ocr", "verify"}
+
+    return r
+}
+
+func (r *ToolRegistry) ToolsForAgent(agent string) []*Tool { ... }
+func (r *ToolRegistry) Get(name string) (*Tool, bool) { ... }
+```
+
+#### VisuTask 专用工具集
+
+| 工具 | 说明 | Agent 可见性 |
+|------|------|-------------|
+| `capture` | 截取当前屏幕/指定窗口 | planner, executor, reviewer |
+| `ocr` | 对截图执行 OCR 识别 | planner, executor, reviewer |
+| `locate` | 定位目标元素（OCR + 图像匹配），返回坐标 | planner, executor |
+| `click` | 在指定坐标执行鼠标点击 | executor |
+| `type` | 在指定输入框输入文字 | executor |
+| `hotkey` | 执行快捷键组合 | executor |
+| `scroll` | 在指定区域滚动 | executor |
+| `wait` | 等待指定时间或条件满足 | executor |
+| `verify` | 验证步骤执行结果（OCR/图像对比） | executor, reviewer |
+| `simulate` | 模拟演示（截图标注目标，不真正操作） | planner |
+| `window` | 窗口操作（聚焦/移动/列出） | planner, executor |
+
+#### Tool 执行流程
+
+```
+LLM 返回 tool_call
+    │
+    ▼
+Permission Check ── deny → 返回拒绝结果给 LLM
+    │
+    ▼ allow
+创建超时 context (默认 30s，可配置)
+    │
+    ▼
+Tool.Execute(ctx, args, toolCtx)
+    │
+    ├── 成功 → ToolResult{Content: "操作成功..."} → 追加到消息 → 继续循环
+    ├── 超时 → ToolResult{Content: "操作超时(30s)"} → 追加到消息 → LLM 决策
+    └── 失败 → ToolResult{Content: "操作失败: ..."} → 追加到消息 → LLM 决策重试或调整
+```
+
+---
+
+### 1.5 Stream Processor
+
+处理 LLM 流式响应的事件状态机。
+
+```go
+// processor.go
+
+type ProcessInput struct {
+    Messages []Message
+    Tools    []*Tool
+    System   string
+    Model    string
+}
+
+type ProcessResult struct {
+    Outcome   Outcome          // stop / compact / continue
+    ToolCalls []ToolCallInfo   // 本轮工具调用
+    TextDelta string           // 文本增量
+}
+
+type Outcome string
+const (
+    OutcomeStop    Outcome = "stop"     // Agent 完成
+    OutcomeCompact Outcome = "compact"  // 需要压缩上下文
+    OutcomeContinue Outcome = "continue" // 有工具调用，继续
+)
+
+type Processor struct {
+    llm       *llm.Gateway
+    registry  *ToolRegistry
+    events    *EventBus
+    safety    *Safety
+}
+
+func (p *Processor) Process(ctx context.Context, input ProcessInput) (*ProcessResult, error) {
+    // 1. 调用 LLM Gateway 获取 Anthropic 风格流式响应
+    stream, err := p.llm.Stream(ctx, llm.StreamRequest{
+        Model:    input.Model,
+        System:   input.System,
+        Messages: input.Messages,
+        Tools:    toLLMTools(input.Tools),
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // 2. 处理 Anthropic SSE 事件流
+    var result ProcessResult
+    var toolCalls []ToolCallInfo
+    var textBuf strings.Builder
+    var currentToolInput strings.Builder
+
+    for event := range stream {
+        switch e := event.(type) {
+
+        case llm.ContentBlockDeltaEvent:
+            switch d := e.Delta.(type) {
+            case llm.TextDelta:
+                textBuf.WriteString(d.Text)
+                p.events.Emit(EventTextDelta, d.Text)
+
+            case llm.InputJSONDelta:
+                currentToolInput.WriteString(d.PartialJSON)
+            }
+
+        case llm.ContentBlockStartEvent:
+            if tb, ok := e.Block.(*llm.ToolUseBlock); ok {
+                p.events.Emit(EventToolCalled, ToolCalledEvent{Name: tb.Name})
+            }
+
+        case llm.ContentBlockStopEvent:
+            // ToolUse block 结束 → 执行工具
+            if toolUse := p.getToolUse(e.Index); toolUse != nil {
+                tool, ok := p.registry.Get(toolUse.Name)
+                if !ok {
+                    toolCalls = append(toolCalls, ToolCallInfo{
+                        Name:   toolUse.Name,
+                        Result: &ToolResult{Content: fmt.Sprintf("unknown tool: %s", toolUse.Name)},
+                    })
+                    continue
+                }
+
+                tc := &ToolContext{SessionID: "...", Events: p.events}
+                toolResult, err := tool.Execute(ctx, toolUse.Input, tc)
+                if err != nil {
+                    toolResult = &ToolResult{Content: fmt.Sprintf("error: %v", err)}
+                }
+
+                p.events.Emit(EventToolResult, ToolResultEvent{Name: toolUse.Name, Result: toolResult})
+                toolCalls = append(toolCalls, ToolCallInfo{
+                    Name:   toolUse.Name,
+                    Args:   toolUse.Input,
+                    Result: toolResult,
+                })
+            }
+
+        case llm.MessageDeltaEvent:
+            if e.StopReason == "tool_use" && len(toolCalls) > 0 {
+                result.Outcome = OutcomeContinue
+            } else {
+                result.Outcome = OutcomeStop
+            }
+
+        case llm.ErrorEvent:
+            return nil, e.Err
+        }
+    }
+
+    result.ToolCalls = toolCalls
+    result.TextDelta = textBuf.String()
+    return &result, nil
+}
+```
+
+---
+
+### 1.6 LLM 网关（流式，Anthropic 协议）
+
+```go
+// internal/llm/gateway.go
+
+// StreamEvent 统一使用 Anthropic SSE 事件类型
+type StreamEvent interface{}
+
+type MessageStartEvent struct{ Message Message }
+type ContentBlockStartEvent struct{ Index int; Block ContentBlock }
+type ContentBlockDeltaEvent struct {
+    Index int
+    Delta Delta  // TextDelta / InputJSONDelta / ThinkingDelta
+}
+type ContentBlockStopEvent struct{ Index int }
+type MessageDeltaEvent struct{ StopReason string; Usage TokenUsage }
+type ErrorEvent struct{ Err error }
+
+type Provider interface {
+    Name() string
+    Available() bool
+    Stream(ctx context.Context, req StreamRequest) (<-chan StreamEvent, error)
+}
+
+type Gateway struct {
+    providers []Provider        // 按环境变量配置优先级排序
+    retry     *RetryPolicy
+}
+
+// Stream 自动选择可用 provider，失败时 fallback
+func (g *Gateway) Stream(ctx context.Context, req StreamRequest) (<-chan StreamEvent, error) {
+    for _, p := range g.providers {
+        if !p.Available() {
+            continue
+        }
+        stream, err := p.Stream(ctx, req)
+        if err != nil {
+            if g.retry.ShouldRetry(err) {
+                continue  // 尝试下一个 provider
+            }
+            return nil, err
+        }
+        return stream, nil
+    }
+    return nil, ErrNoAvailableProvider
+}
+```
+
+#### Provider 适配器
+
+| 文件 | 提供方 | 协议 | 角色 |
+|------|--------|------|------|
+| `anthropic.go` | Anthropic Claude | Anthropic Messages API (SSE) | **主协议** |
+| `openai.go` | OpenAI / 兼容 API | OpenAI Chat Completions (SSE) | 适配层，转换为 Anthropic 内部格式 |
+| `ollama.go` | Ollama 本地模型 | OpenAI-compatible (SSE) | 复用 openai.go 适配器 |
+
+---
+
+### 1.7 上下文管理 (Memory)
+
+参考 OpenCode 的两阶段压缩策略。
+
+```go
+// memory.go
+
+type Memory struct {
+    messages []Message
+    mu       sync.RWMutex
+
+    // 配置
+    contextWindow int     // 模型上下文窗口大小 (tokens)
+    protectRecent int     // 保护最近的 N tokens 不被修剪
+    pruneMin      int     // 最少修剪 N tokens 才值得执行
+}
+
+// LoadMessages 加载消息（过滤已压缩的）
+func (m *Memory) LoadMessages() []Message
+
+// AppendMessage 追加消息
+func (m *Memory) AppendMessage(msg Message)
+
+// IsOverflow 检查上下文是否超出模型窗口
+func (m *Memory) IsOverflow(messages []Message) bool
+
+// Compact 两阶段压缩
+func (m *Memory) Compact(ctx context.Context, llm *Gateway) error {
+    // Phase 1: 丢弃所有截图类消息（只保留文本）
+    m.discardScreenshots()
+
+    // Phase 2: 用 LLM 总结旧消息
+    if m.IsOverflow(m.messages) {
+        summary, err := m.summarizeWithLLM(ctx, llm)
+        if err != nil {
+            return err
+        }
+        m.replaceOldMessages(summary)
+    }
+    return nil
+}
+
+// discardScreenshots 移除所有截图数据，仅保留文本描述
+func (m *Memory) discardScreenshots()
+```
+
+---
+
+### 1.8 事件系统
+
+通过 Wails Events 实时推送到前端。
+
+```go
+// event.go
+
+type EventBus struct {
+    app *application.Application  // Wails app instance
+}
+
+type EventType string
+const (
+    EventStepStarted   EventType = "step:started"    // 新一轮开始
+    EventTextDelta     EventType = "text:delta"      // LLM 文本流
+    EventToolCalled    EventType = "tool:called"     // 工具调用开始
+    EventToolResult    EventType = "tool:result"     // 工具执行结果
+    EventStepProgress  EventType = "step:progress"   // 步骤执行进度
+    EventScreenshot    EventType = "screenshot"      // 截图帧
+    EventOCRResult     EventType = "ocr:result"      // OCR 识别结果
+    EventCompleted     EventType = "completed"       // Agent 完成
+    EventError         EventType = "error"           // 错误
+    EventDoomLoop      EventType = "doom_loop"       // Doom Loop 检测
+)
+
+func (e *EventBus) Emit(event EventType, data any) {
+    e.app.EmitEvent(string(event), data)
+}
+```
+
+前端通过 `EventsOn` 订阅：
+
+```typescript
+// 前端订阅示例
+EventsOn("step:progress", (data) => { ... })
+EventsOn("screenshot", (base64) => { ... })
+EventsOn("tool:called", (data) => { ... })
+```
+
+---
+
+### 1.9 安全机制 (Safety)
+
+```go
+// safety.go
+
+type Safety struct {
+    doomThreshold int                    // 连续重复调用阈值 (默认 3)
+    history       []ToolCallInfo         // 最近的工具调用记录
+}
+
+// IsDoomLoop 检测是否陷入死循环（同一工具+参数连续调用 N 次）
+func (s *Safety) IsDoomLoop(calls []ToolCallInfo) bool {
+    if len(calls) == 0 {
+        return false
+    }
+    last := calls[len(calls)-1]
+    count := 1
+    for i := len(s.history) - 1; i >= 0; i-- {
+        if s.history[i].Name == last.Name &&
+           bytes.Equal(s.history[i].Args, last.Args) {
+            count++
+        } else {
+            break
+        }
+    }
+    return count >= s.doomThreshold
+}
+
+// WaitForConfirmation 通过 Wails Event 请求用户确认
+func (s *Safety) WaitForConfirmation(ctx context.Context) error
+```
+
+---
+
+### 1.10 重试策略 (Retry)
+
+参考 OpenCode 的指数退避 + retry-after header。
+
+```go
+// retry.go
+
+type RetryPolicy struct {
+    initialDelay time.Duration   // 2s
+    maxDelay     time.Duration   // 30s
+    backoffFactor float64        // 2.0
+    maxRetries   int             // 5
+}
+
+func (r *RetryPolicy) ShouldRetry(err error) bool {
+    // 可重试: 5xx 服务端错误, 429 限流, 网络超时
+    // 不可重试: 4xx 客户端错误, 认证失败, 上下文溢出
+}
+
+func (r *RetryPolicy) Wait(ctx context.Context, err error) error {
+    delay := r.calculateDelay(err)
+    select {
+    case <-time.After(delay):
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+}
+
+func (r *RetryPolicy) calculateDelay(err error) time.Duration {
+    // 检查 retry-after header
+    // 否则使用指数退避: initialDelay * backoffFactor^attempt
+}
+```
+
+---
+
+### 1.11 System Prompt 构建
+
+```go
+// system_prompt.go
+
+func (l *Loop) buildSystemPrompt(agent AgentConfig) string {
+    var parts []string
+
+    // 1. 基础指令（按 Agent 角色）
+    parts = append(parts, agent.BasePrompt)
+
+    // 2. 环境信息
+    parts = append(parts, fmt.Sprintf(`
+## 环境信息
+- 操作系统: %s
+- 屏幕分辨率: %s
+- 当前日期: %s
+- 绑定窗口: %s
+`, runtime.GOOS, screenResolution(), time.Now().Format("2006-01-02"), l.session.WindowTitle))
+
+    // 3. 可用工具说明（自动从注册表生成）
+    parts = append(parts, l.generateToolDescriptions(agent.Name))
+
+    // 4. 输出格式要求
+    parts = append(parts, `
+## 输出要求
+- 每次操作前先截图确认当前屏幕状态
+- 使用工具执行操作，不要凭空猜测坐标
+- 每步操作后验证结果
+- 如果连续失败 2 次，停下来分析原因
+`)
+
+    return strings.Join(parts, "\n\n")
+}
+```
+
+---
+
+### 1.12 内置 Agent 角色
+
+| Agent | 用途 | 可用工具 | 模型建议 |
+|-------|------|---------|---------|
+| `planner` | 自然语言 → 步骤计划 + 模拟演示 | capture, ocr, locate, window, simulate | GPT-4o / Claude (带视觉) |
+| `executor` | 按脚本步骤在目标窗口执行 | 全部执行工具 + capture + ocr + verify | GPT-4o / Claude |
+| `reviewer` | 执行结果校验 + 异常分析 | capture, ocr, verify | 轻量模型即可 |
+
+```go
+// agents/planner.go
+var PlannerAgent = AgentConfig{
+    Name:        "planner",
+    Description: "规划 Agent：将自然语言描述转化为可执行的自动化步骤",
+    Model:       "gpt-4o",
+    MaxSteps:    20,
+    BasePrompt: `你是一个 GUI 自动化规划专家。用户会描述一个要自动化的操作任务。
+你的职责是：
+1. 截图观察当前屏幕状态
+2. 用 OCR 识别界面元素
+3. 规划操作步骤序列
+4. 逐步模拟演示（只标注目标，不真正操作）
+5. 等待用户确认后保存为脚本`,
+}
+
+// agents/executor.go
+var ExecutorAgent = AgentConfig{
+    Name:        "executor",
+    Description: "执行 Agent：按脚本步骤在目标窗口上执行操作",
+    Model:       "gpt-4o",
+    MaxSteps:    100,
+    BasePrompt: `你是一个 GUI 自动化执行专家。按照给定的步骤脚本，在指定窗口上逐步执行操作。
+每步执行流程：
+1. 截图确认当前屏幕状态
+2. 用 OCR/locate 定位目标元素
+3. 执行操作（click/type/hotkey 等）
+4. 截图验证操作结果
+5. 如果失败，分析原因并重试`,
+}
+```
+
+---
+
+### 1.13 脚本创建流程（使用 Agent Loop）
+
+```
+前端: 用户输入 "把 Excel 数据录入到 CRM"
+    │
+    ▼ Wails IPC
+Session.Create(ScriptCreation)
+    │
+    ▼ 创建 planner session
+Loop.Run(ctx)
+    │
+    ├── Step 1: LLM 返回 tool_call: capture()
+    │           → 截图 → 返回 base64 给 LLM
+    │
+    ├── Step 2: LLM 返回 tool_call: ocr(screenshot)
+    │           → OCR 识别 → 返回文字列表+坐标
+    │
+    ├── Step 3: LLM 返回 tool_call: simulate(step_plan)
+    │           → 截图标注目标 → 推送给前端展示
+    │
+    ├── Step 4-8: 更多 simulate 调用...
+    │
+    └── Step N: LLM 返回最终步骤计划（无工具调用）
+                → OutcomeStop → 返回 ScriptPlan 给前端
+```
+
+### 1.14 任务执行流程（使用 Agent Loop）
+
+```
+前端: 用户点击 "启动任务"
+    │
+    ▼ Wails IPC
+Concurrency.Acquire() → 检查槽位
+    │
+    ▼ 创建 executor session
+Session.Create(TaskExecution, task)
+    │
+    ▼ 注入脚本步骤到 system prompt
+Loop.Run(ctx)
+    │
+    ├── Step 1: LLM 读取步骤 1 "click 新建"
+    │           → tool_call: locate("新建") → 返回坐标
+    │           → tool_call: click(x, y) → 执行点击
+    │           → tool_call: verify() → 验证结果
+    │
+    ├── Step 2: LLM 读取步骤 2 "input 姓名"
+    │           → tool_call: locate("姓名") → 定位输入框
+    │           → tool_call: type("张三") → 输入文字
+    │           → tool_call: verify() → 验证
+    │
+    ├── ... 逐步执行 ...
+    │
+    └── 全部步骤完成 → OutcomeStop
+        → Concurrency.Release()
+        → 保存 Execution 记录
+```
+
+---
+
+### 1.15 前端订阅的事件清单
+
+| 事件 | 数据 | 前端处理 |
+|------|------|---------|
+| `step:started` | `{step: number}` | 更新步骤计数 |
+| `text:delta` | `string` | 追加到 AI 对话区 |
+| `tool:called` | `{name, args}` | 显示"正在执行: click..." |
+| `tool:result` | `{name, success, screenshot}` | 更新步骤状态 |
+| `step:progress` | `{index, total, action, target}` | 更新进度条 |
+| `screenshot` | `base64 string` | 更新实时画面 |
+| `ocr:result` | `{text, rect, confidence}[]` | 更新 OCR 结果列表 |
+| `completed` | `{success, duration}` | 显示完成提示 |
+| `error` | `{message, step}` | Toast 错误通知 |
+| `doom_loop` | `{tool, count}` | 弹窗询问用户 |
+
+---
+
+### 脚本创建流程（简化版）
 
 ```
 用户描述 → Parser.ParseIntent()
@@ -82,7 +859,7 @@ Agent 是系统的"大脑"，负责脚本的创建（解析、规划、模拟）
               ▼ (用户可从此脚本创建多个任务)
 ```
 
-### 任务执行流程
+### 任务执行流程（简化版）
 
 ```
 用户创建任务 → 选择脚本 + 绑定窗口 + 配置参数
@@ -300,31 +1077,98 @@ type Rect struct {
 
 ## 5. LLM 网关 (`internal/llm/`)
 
-统一管理多个 LLM 提供方，自动 fallback。
+以 **Anthropic Messages API** 为主协议，兼容 OpenAI 格式。内部统一使用 Anthropic 数据模型。
 
 | 文件 | 职责 |
 |------|------|
 | `gateway.go` | 统一调用入口，路由 + 重试 + fallback |
-| `openai.go` | OpenAI API 适配器 |
-| `claude.go` | Claude API 适配器 |
-| `ollama.go` | Ollama 本地模型适配器 |
+| `anthropic.go` | **Anthropic Messages API**（主协议，支持 streaming / vision / thinking） |
+| `openai.go` | OpenAI Chat Completions 适配（转换为内部 Anthropic 格式） |
+| `ollama.go` | Ollama 本地模型（通过 OpenAI-compatible 接口） |
+
+### 设计原则
+
+- 内部数据模型统一使用 Anthropic 格式（`Message`, `Content`, `ToolUse`, `ToolResult`）
+- OpenAI 适配器负责将 OpenAI 请求/响应转换为 Anthropic 格式
+- Ollama 通过 OpenAI-compatible API 接入，复用 OpenAI 适配器
 
 ### 核心接口
 
 ```go
-type LLMProvider interface {
-    Chat(ctx context.Context, messages []Message) (*Response, error)
-    ChatWithVision(ctx context.Context, messages []Message, images []Image) (*Response, error)
+// Anthropic 风格的消息格式（内部统一模型）
+type Message struct {
+    Role    string      // "user" / "assistant"
+    Content []ContentBlock
+}
+
+type ContentBlock interface {
+    contentType() string
+}
+
+type TextBlock struct {
+    Type string `json:"type"` // "text"
+    Text string `json:"text"`
+}
+
+type ImageBlock struct {
+    Type   string    `json:"type"` // "image"
+    Source ImageSource `json:"source"`
+}
+
+type ToolUseBlock struct {
+    Type  string          `json:"type"` // "tool_use"
+    ID    string          `json:"id"`
+    Name  string          `json:"name"`
+    Input json.RawMessage `json:"input"`
+}
+
+type ToolResultBlock struct {
+    Type      string `json:"type"` // "tool_result"
+    ToolUseID string `json:"tool_use_id"`
+    Content   string `json:"content"`
+    IsError   bool   `json:"is_error"`
+}
+
+// Provider 统一接口
+type Provider interface {
     Name() string
     Available() bool
+    Stream(ctx context.Context, req StreamRequest) (<-chan StreamEvent, error)
+}
+
+// StreamRequest 统一使用 Anthropic Messages API 格式
+type StreamRequest struct {
+    Model     string
+    System    string
+    Messages  []Message
+    Tools     []ToolSchema
+    MaxTokens int
 }
 
 type Gateway struct {
-    providers []LLMProvider  // 按优先级排序
+    providers []Provider  // 按环境变量配置的优先级排序
+    retry     *RetryPolicy
 }
 
-// Chat 自动选择可用 provider，失败时 fallback 到下一个
-func (g *Gateway) Chat(ctx context.Context, messages []Message) (*Response, error)
+func (g *Gateway) Stream(ctx context.Context, req StreamRequest) (<-chan StreamEvent, error)
+```
+
+### OpenAI 适配层
+
+```go
+// openai.go — 将 Anthropic 内部格式 ↔ OpenAI 格式双向转换
+
+type OpenAIAdapter struct {
+    apiKey  string
+    baseURL string
+}
+
+// Stream 接收 Anthropic 格式请求 → 转换为 OpenAI 格式 → 调用 → 转回 Anthropic 事件流
+func (a *OpenAIAdapter) Stream(ctx context.Context, req StreamRequest) (<-chan StreamEvent, error) {
+    openaiReq := toOpenAIRequest(req)     // Anthropic → OpenAI
+    stream, err := a.callOpenAI(ctx, openaiReq)
+    return fromOpenAIStream(stream), err  // OpenAI events → Anthropic events
+}
 ```
 
 ---
@@ -357,23 +1201,42 @@ func (g *Gateway) Chat(ctx context.Context, messages []Message) (*Response, erro
 type Manager struct {
     userMax  int                // 用户等级对应的上限
     running  map[string]context.CancelFunc  // taskID → cancel
+    windows  map[uintptr]string            // windowHandle → taskID（窗口占用表）
     mu       sync.Mutex
 }
 
-// Acquire 尝试获取执行槽位，返回是否成功
-func (m *Manager) Acquire(taskID string) (context.Context, error)
+// Acquire 尝试获取执行槽位
+// 检查: 1) 并发上限  2) 窗口冲突
+func (m *Manager) Acquire(taskID string, windowHandle uintptr) (context.Context, error) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
 
-// Release 释放槽位
-func (m *Manager) Release(taskID string)
+    // 检查并发上限
+    if len(m.running) >= m.userMax {
+        return nil, ErrConcurrencyLimit
+    }
 
-// RunningCount 当前运行中的任务数
-func (m *Manager) RunningCount() int
+    // 检查窗口冲突
+    if occupiedBy, ok := m.windows[windowHandle]; ok {
+        return nil, fmt.Errorf("窗口已被任务 %s 占用", occupiedBy)
+    }
 
-// RunningTasks 返回运行中的任务ID列表
-func (m *Manager) RunningTasks() []string
+    ctx, cancel := context.WithCancel(context.Background())
+    m.running[taskID] = cancel
+    m.windows[windowHandle] = taskID
+    return ctx, nil
+}
 
-// MaxConcurrent 当前用户的并发上限
-func (m *Manager) MaxConcurrent() int
+// Release 释放槽位 + 窗口占用
+func (m *Manager) Release(taskID string, windowHandle uintptr) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    if cancel, ok := m.running[taskID]; ok {
+        cancel()
+        delete(m.running, taskID)
+    }
+    delete(m.windows, windowHandle)
+}
 ```
 
 ---
@@ -456,12 +1319,13 @@ func (m *Manager) MaxConcurrent() int
 
 ## 待讨论
 
-- [ ] 脚本删除时，已关联的任务如何处理？（级联删除 vs 禁止删除 vs 解除关联）
-- [ ] 任务绑定的窗口句柄在系统重启后失效，如何处理？（按窗口标题/进程名重新匹配）
-- [ ] 并发执行时，多个任务操作同一个窗口怎么办？（互斥锁 vs 用户自行管理）
-- [ ] VIP 等级的验证方式？（本地校验 vs 服务端验证）
-- [ ] 任务暂停后恢复时，是从当前步骤继续还是从头开始？
-- [ ] Parser 用 LLM 解析还是规则+LLM 混合？
-- [ ] Simulator 的标注覆盖图用 Go 端生成还是前端 Canvas 绘制？
-- [ ] Recovery 策略的阈值如何配置？
-- [ ] LLM 网关是否需要支持流式输出（streaming）用于实时规划？
+- [x] ~~脚本删除时，已关联的任务如何处理？~~ → **禁止删除**，提示用户先删除关联任务
+- [x] ~~任务绑定的窗口句柄在系统重启后失效，如何处理？~~ → **按窗口标题/进程名重新匹配**，找不到则终止任务并通知用户原因
+- [x] ~~并发执行时，多个任务操作同一个窗口怎么办？~~ → **启动时检测窗口冲突**，若同一窗口已有任务运行，拒绝执行并提示用户
+- [ ] **TODO（后期完成）**：登录、VIP 等级验证、用户信息体系
+- [x] ~~任务暂停后恢复时，是从当前步骤继续还是从头开始？~~ → **从当前步骤继续**
+- [x] ~~Agent Loop 的最大步数默认值？~~ → **可在设置中配置**，默认 planner: 20, executor: 100
+- [x] ~~上下文压缩时，截图类消息如何处理？~~ → **完全丢弃截图**，只保留对话文本数据
+- [x] ~~Tool 执行超时时间如何配置？~~ → **全局默认 30s**，可在设置中配置
+- [x] ~~LLM Gateway 的 fallback 顺序？~~ → **当前通过环境变量配置**（构建时注入），后期改为远端获取 (TODO)
+- [x] ~~是否需要支持 Agent 角色自定义？~~ → **不需要**，所有 Agent 角色均为内置，用户无需额外配置

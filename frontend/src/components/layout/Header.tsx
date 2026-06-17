@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Settings } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { useAppStore } from '@/stores/appStore'
 import { mockUser } from '@/mock/user'
 
 export function Header() {

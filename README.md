@@ -13,17 +13,18 @@
 
 **VisuTask** 是一款智能化的 GUI 流程自动化桌面应用，采用 **Wails（Go 后端 + React 前端）** 框架打包为单一原生可执行文件。它通过 **OCR（光学字符识别）** 实时感知屏幕内容，结合 **AI Agent 任务规划能力** 将复杂操作分解为可执行的原子步骤，最终实现对任意可视化界面的端到端自动化操作。
 
-与传统 RPA（机器人流程自动化）不同，VisuTask 不依赖固定的坐标点击或 DOM 选择器，而是像人类一样"看懂屏幕，理解任务，动手操作"，因此具备更强的鲁棒性和跨应用泛化能力。
+与传统 RPA 不同，VisuTask **不需要用户拖拽流程图或编写脚本**。只需用自然语言描述任务，Agent 就会逐步模拟演示每个操作（截图 + 标注目标区域），用户逐条确认后自动生成可复用的任务模板。整个过程像"教 AI 做一次操作"——演示一遍，它就能反复自动执行。
 
 ### 核心理念
 
 ```
-屏幕截图 → OCR 识别 → Agent 理解 → 任务分解 → 逐步执行 → 结果验证
+用户描述任务 → Agent 规划步骤 → 逐步模拟确认 → 自动生成文档 → 正式执行验证
 ```
 
-- **👀 看**：截取屏幕，通过 OCR 和视觉识别理解当前界面的布局、文字、控件
-- **🧠 想**：AI Agent 分析用户意图，将高层任务分解为低层操作序列
-- **🖐️ 动**：模拟键盘/鼠标操作，逐步执行并实时验证每一步的结果
+- **📝 说**：用自然语言描述要完成的任务，无需学习任何编排工具
+- **👀 看**：Agent 截图标注每一步的操作目标，让用户直观确认
+- **🧠 想**：AI Agent 理解意图，将高层任务分解为可执行的原子步骤
+- **🖐️ 动**：按确认后的步骤模拟键鼠操作，实时验证每步结果
 
 ### 为什么选择桌面应用？
 
@@ -48,12 +49,12 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │              🎨 React 前端 (原生 WebView)                │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ │  │
-│  │  │ 任务编排  │ │ 实时预览  │ │ 执行日志  │ │ 任务市场   │ │  │
-│  │  │Designer  │ │Live View │ │   Logs   │ │  Market   │ │  │
+│  │  │ 任务创建  │ │ 实时预览  │ │ 执行日志  │ │ 任务列表   │ │  │
+│  │  │Designer  │ │Live View │ │   Logs   │ │ TaskList  │ │  │
 │  │  └──────────┘ └──────────┘ └──────────┘ └───────────┘ │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐   │  │
-│  │  │ 定时调度  │ │ 录制回放  │ │ React Flow 流程编排   │   │  │
-│  │  │Scheduler │ │ Recorder │ │ 拖拽式任务设计器       │   │  │
+│  │  │ 定时调度  │ │ 录制回放  │ │ 执行监控面板          │   │  │
+│  │  │Scheduler │ │ Recorder │ │  实时进度+截图流       │   │  │
 │  │  └──────────┘ └──────────┘ └──────────────────────┘   │  │
 │  └───────────────────────┬────────────────────────────────┘  │
 │                          │  Wails IPC (Bindings)              │
@@ -63,9 +64,13 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 │  │  ┌───────────────────────────────────────────────────┐ │  │
 │  │  │               🧠 Agent 调度核心                      │ │  │
 │  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐│ │  │
-│  │  │  │ 任务解析 │ │ 计划生成 │ │ 步骤执行 │ │ 异常恢复  ││ │  │
-│  │  │  │ Parser  │ │ Planner │ │Executor │ │ Recovery ││ │  │
+│  │  │  │ 任务解析 │ │ 计划生成 │ │ 模拟演示 │ │ 步骤执行  ││ │  │
+│  │  │  │ Parser  │ │ Planner │ │Simulate │ │ Executor ││ │  │
 │  │  │  └─────────┘ └─────────┘ └─────────┘ └──────────┘│ │  │
+│  │  │  ┌─────────┐                                      │ │  │
+│  │  │  │ 异常恢复 │                                      │ │  │
+│  │  │  │ Recovery │                                      │ │  │
+│  │  │  └─────────┘                                      │ │  │
 │  │  └───────────────────────────────────────────────────┘ │  │
 │  │                                                         │  │
 │  │  ┌───────────────────────────────────────────────────┐ │  │
@@ -104,6 +109,7 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 | **Wails Runtime** | Go ↔ React 双向绑定通信 | Wails v3 原生 IPC |
 | **任务解析器 (Parser)** | 将自然语言描述的任务转为结构化指令 | Go + LLM API |
 | **计划生成器 (Planner)** | 根据屏幕状态和任务目标规划操作步骤序列 | Agent 推理链 / 分层规划 |
+| **模拟演示器 (Simulator)** | 逐步模拟操作（截图标注目标，不真正执行），供用户确认 | 截图 + OCR 标注 + 高亮覆盖 |
 | **OCR 引擎** | 识别屏幕文字及其位置坐标（返回给前端标注） | Tesseract CGo / PaddleOCR gRPC |
 | **控件检测** | 定位按钮、输入框、下拉菜单等可交互元素 | GoCV (OpenCV) / 边缘检测 / 轮廓分析 |
 | **屏幕截图** | 高性能屏幕捕获，实时帧推送到前端预览 | Windows GDI / macOS CGWindow / X11 SHM |
@@ -126,10 +132,20 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 [Planner] 截取当前屏幕 → OCR 识别 → 结合意图生成操作计划
    │
    ▼  (Wails Events: Go → React 实时状态推送)
-[React 前端] 展示执行计划的步骤树，等待用户确认
+[React 前端] 展示执行计划的步骤列表，等待用户确认
    │
-   ▼  (用户点击"执行")
-[Executor] 逐步执行操作序列
+   ▼  (用户点击"模拟执行")
+[Agent] 逐步模拟演示操作序列
+   │
+   ├── 每步：截图 → OCR 标注 → 高亮目标区域 → 暂停等待确认
+   ├── 用户可确认、修改、跳过或插入新步骤
+   ├── Wails Events 实时推送当前步骤截图和 OCR 结果到前端
+   │
+   ▼  (用户确认全部步骤)
+[保存] 结构化任务模板存入 SQLite，可复用、可编辑
+   │
+   ▼  (用户点击"正式执行")
+[Executor] 按已确认的步骤序列自动执行
    │
    ├── 每步执行前截图 → OCR 定位目标 → 执行键鼠操作 → 截图验证结果
    ├── Wails Events 实时推送执行进度、当前步骤截图到前端
@@ -149,13 +165,12 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 用户: "把 Excel 里的 100 条客户信息逐一录入到网页 CRM 系统中"
 
 VisuTask:
-  1. 打开 Excel 文件，OCR 识别表格内容
-  2. 规划：每条记录 → 依次操作
-  3. 循环执行：
-     a. 截屏定位 CRM 的"新增客户"按钮 → 点击
-     b. 依次识别名字/电话/邮箱输入框 → 填入数据
-     c. 点击"保存" → 验证成功提示
-     d. 回到 Excel 读取下一条
+  1. Agent 解析意图，规划操作步骤
+  2. 模拟演示第一步：截图 Excel，OCR 标注第一行数据 → 用户确认
+  3. 模拟演示第二步：截图 CRM，标注"新增"按钮和各输入框 → 用户确认
+  4. 模拟演示第三步：标注"保存"按钮，验证成功提示 → 用户确认
+  5. 用户确认所有步骤 → 保存为任务模板
+  6. 正式执行：循环 100 次，每次录入一条数据
 ```
 
 ### 场景二：软件安装与配置
@@ -164,10 +179,11 @@ VisuTask:
 用户: "帮我安装 Python 3.12 并配置好环境变量"
 
 VisuTask:
-  1. 打开安装程序 → OCR 识别安装向导界面
-  2. 按步骤操作：Next → 勾选 Add to PATH → Install → Finish
-  3. 打开系统环境变量 → 验证 Python 路径已添加
-  4. 截图验证安装结果
+  1. Agent 规划安装步骤
+  2. 逐步模拟：打开安装程序 → 勾选 Add to PATH → Install → Finish
+  3. 用户确认每步操作目标和顺序
+  4. 保存为可复用模板
+  5. 正式执行 → 截图验证安装结果
 ```
 
 ### 场景三：定时办公自动化
@@ -176,10 +192,10 @@ VisuTask:
 用户: "每天 9 点打开企业微信，找到昨日未读消息并汇总"
 
 VisuTask:
-  1. 定时触发（后台静默执行）→ 打开企业微信
-  2. OCR 识别未读消息列表
-  3. 逐条读取并提取关键信息
-  4. 生成汇总报告，保存到本地并弹窗通知
+  1. Agent 规划：打开企业微信 → 定位未读消息 → 逐条读取 → 汇总
+  2. 逐步模拟并标注每个操作目标 → 用户确认
+  3. 保存模板 + 配置定时触发
+  4. 后台静默执行 → 生成汇总报告 → 弹窗通知
 ```
 
 ### 场景四：桌面应用回归测试
@@ -188,10 +204,10 @@ VisuTask:
 用户: "回归测试这个桌面应用的所有表单提交功能"
 
 VisuTask:
-  1. 识别界面中所有表单和按钮
+  1. Agent 截图识别界面中所有表单和按钮
   2. 自动生成测试用例（正常值、边界值、异常值）
-  3. 逐项填写并提交
-  4. OCR 校验提交结果，记录 Pass/Fail
+  3. 逐步模拟每个表单的填写和提交 → 用户确认
+  4. 正式执行 → OCR 校验提交结果 → 记录 Pass/Fail
 ```
 
 ---
@@ -213,8 +229,9 @@ VisuTask:
 |------|------|------|
 | **框架** | React 18 + TypeScript | 组件化 UI |
 | **构建** | Vite | Wails 原生集成，HMR 热更新 |
-| **UI 组件** | Ant Design 5 | 企业级桌面风格组件 |
-| **流程编排** | React Flow | 拖拽式任务流程设计器 |
+| **UI 组件** | shadcn/ui + Tailwind CSS | 现代化可定制组件，按需引入 |
+| **图标** | Lucide (`lucide-react`) | shadcn/ui 官方配套，Tree-shakeable 按需加载 |
+| **任务创建** | Agent 模拟 + 对话确认 | 逐步演示、确认、自动生成任务文档 |
 | **状态管理** | Zustand | 轻量响应式状态 |
 | **实时通信** | Wails Runtime (Events) | Go → React 事件推送，无网络开销 |
 | **图表** | ECharts / AntV | 执行统计仪表盘 |
@@ -260,14 +277,14 @@ VisuTask/
 │       ├── main.tsx                # 前端入口
 │       ├── pages/
 │       │   ├── Dashboard/          # 仪表盘首页（任务概览、统计）
-│       │   ├── Designer/           # 任务编排面板（拖拽式流程设计）
+│       │   ├── Designer/           # 任务创建向导（Agent 模拟 + 确认）
 │       │   ├── Recorder/           # 操作录制器
 │       │   ├── TaskList/           # 任务列表管理
 │       │   ├── ExecutionLog/       # 执行日志与截图回放
 │       │   ├── ScreenLive/         # 实时屏幕预览
 │       │   └── Settings/           # 系统设置（LLM / OCR / 快捷键）
 │       ├── components/
-│       │   ├── FlowEditor/         # React Flow 流程图编辑器
+│       │   ├── TaskWizard/         # 任务创建向导（步骤确认面板）
 │       │   ├── ScreenViewer/       # 屏幕查看器（标注 OCR 结果）
 │       │   ├── StepRecorder/       # 步骤录制悬浮窗
 │       │   ├── ResultDiff/         # 执行前后截图对比
@@ -284,6 +301,7 @@ VisuTask/
 │   ├── agent/                      # Agent 调度核心
 │   │   ├── parser.go               # 任务解析器 (NL → 结构化计划)
 │   │   ├── planner.go              # 计划生成器
+│   │   ├── simulator.go            # 模拟演示器（截图标注，不执行）
 │   │   ├── executor.go             # 步骤执行器
 │   │   ├── memory.go               # 短期/长期记忆
 │   │   └── recovery.go             # 异常恢复策略
@@ -357,12 +375,13 @@ VisuTask/
 - [ ] 步骤级截图验证 + 自动重试/回退机制
 - [ ] 前端实时执行进度展示（步骤动画 + 截图流）
 
-### Phase 3 — 可视化编排
-- [ ] React Flow 拖拽式任务流程设计器
+### Phase 3 — 智能任务创建
+- [ ] 任务创建向导：Agent 逐步模拟演示 + 用户确认交互
+- [ ] 截图标注高亮：OCR 识别结果 + 目标区域可视化标注
+- [ ] 步骤编辑器：用户可修改、插入、删除、跳过步骤
+- [ ] 任务模板保存：结构化 JSON 持久化，支持编辑和复用
 - [ ] 操作录制：记录用户键鼠操作，自动生成任务步骤
 - [ ] 录制回放：按录制轨迹回放并 OCR 校验
-- [ ] 条件分支节点（if/else）、循环节点（loop/for-each）
-- [ ] 变量系统：步骤间数据传递和动态参数
 
 ### Phase 4 — 生产增强
 - [ ] 定时任务：Cron 后台静默执行 + 系统托盘驻留
@@ -459,7 +478,7 @@ wails3 dev
 #### Go 后端 — 暴露给前端的绑定方法
 
 ```go
-// internal/agent/executor.go
+// internal/agent/service.go
 package agent
 
 import (
@@ -468,31 +487,80 @@ import (
 )
 
 type AgentService struct {
+    parser   *Parser
+    planner  *Planner
     executor *Executor
     ocr      *vision.OCREngine
 }
 
-// RunTask 前端可直接调用此方法
-func (a *AgentService) RunTask(description string) (*ExecutionResult, error) {
-    // 1. LLM 解析自然语言
-    plan, err := a.parser.Parse(context.Background(), description)
+// CreateTaskPlan 根据自然语言描述生成任务计划，供前端展示确认
+func (a *AgentService) CreateTaskPlan(description string) (*TaskPlan, error) {
+    // 1. LLM 解析自然语言意图
+    intent, err := a.parser.Parse(context.Background(), description)
     if err != nil {
         return nil, err
     }
 
-    // 2. 逐步执行，每步通过 Wails Events 推送进度给前端
-    for i, step := range plan.Steps {
-        // 截图 → OCR → 定位目标 → 执行操作 → 验证
+    // 2. 截图 + OCR 感知当前屏幕状态
+    screenshot := captureScreen()
+    ocrResults := a.ocr.Recognize(screenshot)
+
+    // 3. 结合意图和屏幕状态生成操作计划
+    plan, err := a.planner.GeneratePlan(context.Background(), intent, screenshot, ocrResults)
+    if err != nil {
+        return nil, err
+    }
+
+    return plan, nil
+}
+
+// SimulateStep 模拟执行单个步骤（不真正操作，仅截图标注目标）
+func (a *AgentService) SimulateStep(stepIndex int, plan *TaskPlan) (*StepSimulation, error) {
+    step := plan.Steps[stepIndex]
+
+    // 截图 → OCR → 定位目标区域 → 生成标注图
+    screenshot := captureScreen()
+    ocrResults := a.ocr.Recognize(screenshot)
+    target := a.planner.LocateTarget(screenshot, ocrResults, step.Target)
+
+    return &StepSimulation{
+        StepIndex:  stepIndex,
+        Action:     step.Action,
+        Target:     step.Target,
+        Screenshot: screenshot,    // base64 截图
+        Annotation: target.Overlay, // 标注框高亮目标区域
+        Confidence: target.Score,   // 匹配置信度
+    }, nil
+}
+
+// ConfirmAndSave 用户确认所有步骤后保存为任务模板
+func (a *AgentService) ConfirmAndSave(plan *TaskPlan, name string) (*Task, error) {
+    task := &Task{
+        Name:    name,
+        Steps:   plan.Steps,
+        Created: time.Now(),
+    }
+    return a.store.SaveTask(task)
+}
+
+// RunTask 正式执行已确认的任务
+func (a *AgentService) RunTask(taskID string) (*ExecutionResult, error) {
+    task, err := a.store.GetTask(taskID)
+    if err != nil {
+        return nil, err
+    }
+
+    for i, step := range task.Steps {
+        // 推送进度到前端
         application.Get().EmitEvent("step:progress", StepProgress{
-            Index:   i + 1,
-            Total:   len(plan.Steps),
-            Action:  step.Action,
-            Target:  step.Target,
-            Screenshot: capture(), // base64 截图帧
+            Index:      i + 1,
+            Total:      len(task.Steps),
+            Action:     step.Action,
+            Target:     step.Target,
+            Screenshot: captureScreen(),
         })
 
         if err := a.executor.ExecuteStep(ctx, step); err != nil {
-            // 自动重试或提示用户
             application.Get().EmitEvent("step:error", err)
         }
     }
@@ -501,48 +569,112 @@ func (a *AgentService) RunTask(description string) (*ExecutionResult, error) {
 }
 ```
 
-#### React 前端 — 调用 Go 方法
+#### React 前端 — 任务创建向导
 
 ```tsx
 // pages/Designer/index.tsx
-import { RunTask } from "@wailsjs/go/agent/AgentService";
+import {
+  CreateTaskPlan,
+  SimulateStep,
+  ConfirmAndSave,
+  RunTask,
+} from "@wailsjs/go/agent/AgentService";
 import { EventsOn } from "@wailsjs/runtime/runtime";
 
-function TaskRunner() {
-  const [progress, setProgress] = useState<StepProgress | null>(null);
+function TaskWizard() {
+  const [description, setDescription] = useState("");
+  const [plan, setPlan] = useState<TaskPlan | null>(null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [simulation, setSimulation] = useState<StepSimulation | null>(null);
 
-  // 监听 Go 后端的实时事件
-  EventsOn("step:progress", (p: StepProgress) => {
-    setProgress(p);
-  });
+  // 第一步：用户描述任务，Agent 生成计划
+  const handleCreate = async () => {
+    const plan = await CreateTaskPlan(description);
+    setPlan(plan);
+    setCurrentStep(0);
+  };
 
+  // 第二步：逐步模拟演示，用户确认
+  const handleSimulate = async () => {
+    if (!plan) return;
+    const sim = await SimulateStep(currentStep, plan);
+    setSimulation(sim);
+  };
+
+  // 用户确认当前步骤，进入下一步
+  const handleConfirmStep = () => {
+    if (plan && currentStep < plan.steps.length - 1) {
+      setCurrentStep(currentStep + 1);
+      handleSimulate();
+    }
+  };
+
+  // 全部确认，保存任务模板
+  const handleSave = async () => {
+    if (!plan) return;
+    const task = await ConfirmAndSave(plan, description);
+    console.log("任务已保存:", task);
+  };
+
+  // 正式执行
   const handleRun = async () => {
-    const result = await RunTask(
-      "打开浏览器，访问 GitHub 首页，搜索 'RPA automation'"
-    );
+    const result = await RunTask(plan?.taskID);
     console.log("执行完成:", result);
   };
 
+  // 监听执行进度
+  EventsOn("step:progress", (p: StepProgress) => {
+    console.log(`执行中: ${p.index}/${p.total} - ${p.action}`);
+  });
+
   return (
     <div>
-      <Button onClick={handleRun}>执行任务</Button>
-      {progress && (
-        <ProgressBar
-          percent={(progress.index / progress.total) * 100}
-          text={`${progress.action}: ${progress.target}`}
-        />
+      {/* 输入区 */}
+      <Textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="描述你的任务，例如：打开浏览器访问 GitHub 搜索 RPA"
+      />
+      <Button onClick={handleCreate}>生成计划</Button>
+
+      {/* 步骤确认区 */}
+      {plan && (
+        <div>
+          <h3>
+            步骤 {currentStep + 1}/{plan.steps.length}：
+            {plan.steps[currentStep].action} - {plan.steps[currentStep].target}
+          </h3>
+          <Button onClick={handleSimulate}>模拟演示</Button>
+
+          {simulation && (
+            <div>
+              {/* 截图 + OCR 标注高亮 */}
+              <img src={`data:image/png;base64,${simulation.screenshot}`} />
+              <img
+                src={`data:image/png;base64,${simulation.annotation}`}
+                style={{ position: "absolute" }}
+              />
+              <p>置信度: {(simulation.confidence * 100).toFixed(1)}%</p>
+            </div>
+          )}
+
+          <Button onClick={handleConfirmStep}>确认此步</Button>
+          <Button onClick={handleSave}>保存任务</Button>
+          <Button onClick={handleRun}>正式执行</Button>
+        </div>
       )}
-      {progress?.screenshot && <img src={progress.screenshot} />}
     </div>
   );
 }
 ```
 
-#### 结构化任务 JSON
+#### 结构化任务模板（Agent 自动生成）
 
 ```json
 {
+  "id": "task_001",
   "name": "数据录入",
+  "description": "将客户信息从 Excel 录入到 CRM 系统",
   "trigger": {
     "type": "manual",
     "hotkey": "Ctrl+Shift+D"
@@ -552,12 +684,52 @@ function TaskRunner() {
     "phone": "13800138000"
   },
   "steps": [
-    { "action": "click",   "target": "新建按钮" },
-    { "action": "input",   "target": "姓名输入框", "value": "{{name}}" },
-    { "action": "input",   "target": "电话输入框", "value": "{{phone}}" },
-    { "action": "click",   "target": "保存" },
-    { "action": "verify",  "target": "保存成功", "timeout": 5000 }
-  ]
+    {
+      "id": 1,
+      "action": "click",
+      "target": "新建按钮",
+      "targetOCR": "新建",
+      "confidence": 0.95,
+      "confirmed": true
+    },
+    {
+      "id": 2,
+      "action": "input",
+      "target": "姓名输入框",
+      "targetOCR": "姓名",
+      "value": "{{name}}",
+      "confidence": 0.92,
+      "confirmed": true
+    },
+    {
+      "id": 3,
+      "action": "input",
+      "target": "电话输入框",
+      "targetOCR": "电话",
+      "value": "{{phone}}",
+      "confidence": 0.91,
+      "confirmed": true
+    },
+    {
+      "id": 4,
+      "action": "click",
+      "target": "保存",
+      "targetOCR": "保存",
+      "confidence": 0.98,
+      "confirmed": true
+    },
+    {
+      "id": 5,
+      "action": "verify",
+      "target": "保存成功",
+      "targetOCR": "保存成功",
+      "timeout": 5000,
+      "confidence": 0.88,
+      "confirmed": true
+    }
+  ],
+  "createdAt": "2026-06-17T10:30:00Z",
+  "updatedAt": "2026-06-17T10:30:00Z"
 }
 ```
 
@@ -594,8 +766,8 @@ function TaskRunner() {
 - [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) — Google 开源 OCR 引擎
 - [GoCV](https://github.com/hybridgroup/gocv) — Go 语言 OpenCV 绑定
 - [robotgo](https://github.com/go-vgo/robotgo) — Go 跨平台桌面自动化
-- [React Flow](https://github.com/wbkd/react-flow) — React 节点编辑器
-- [Ant Design](https://github.com/ant-design/ant-design) — 企业级 UI 组件库
+- [shadcn/ui](https://ui.shadcn.com/) — 现代化可定制 React 组件库
+- [Lucide](https://lucide.dev/) — 现代 SVG 图标库，shadcn/ui 官方配套
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) — 自主 AI Agent
 - [OmniParser](https://microsoft.github.io/OmniParser/) — 微软屏幕理解模型
 

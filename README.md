@@ -11,7 +11,7 @@
 
 ## 📖 项目简介
 
-**VisuTask** 是一款智能化的 GUI 流程自动化桌面应用，采用 **Wails（Go 后端 + React 前端）** 框架打包为单一原生可执行文件。它通过 **OCR（光学字符识别）** 实时感知屏幕内容，结合 **AI Agent 任务规划能力** 将复杂操作分解为可执行的原子步骤，最终实现对任意可视化界面的端到端自动化操作。
+**VisuTask** 是一款智能化的 GUI 流程自动化桌面应用，采用 **Wails v3（Go 后端 + React 前端）** 框架打包为单一原生可执行文件。它通过 **远端 OCR 服务** 实时感知屏幕内容，结合 **AI Agent 任务规划能力** 将复杂操作分解为可执行的原子步骤，最终实现对任意可视化界面的端到端自动化操作。
 
 与传统 RPA 不同，VisuTask **不需要用户拖拽流程图或编写脚本**。只需用自然语言描述操作，Agent 逐步模拟演示每个步骤（截图 + 标注目标区域），用户确认后保存为**脚本模板**。脚本可绑定到不同窗口创建**执行任务**，多个任务**并发运行**（普通用户最多 3 个，VIP 最高 10 个）。整个过程像"教 AI 做一次操作"——演示一遍，它就能在多个窗口上反复自动执行。
 
@@ -22,7 +22,7 @@
                                                      │
                               创建任务（绑定脚本+窗口句柄+参数）
                                                      │
-                              多任务并发执行（最多 10~15 个）
+                              多任务并发执行（最多 3~10 个）
 ```
 
 - **📝 说**：用自然语言描述要完成的操作，Agent 自动生成脚本
@@ -30,78 +30,52 @@
 - **🚀 跑**：脚本绑定到不同窗口，多个任务同时并发执行
 - **🧠 智**：AI Agent 理解意图、规划步骤、验证结果、异常恢复
 
-### 为什么选择桌面应用？
-
-| 优势 | 说明 |
-|------|------|
-| **原生性能** | Go 直接调用系统 API，无浏览器沙箱限制，键鼠操作延迟更低 |
-| **单文件分发** | Wails 打包为单一 exe/dmg/AppImage，用户无需安装任何运行时 |
-| **系统级能力** | 直接访问屏幕截图、全局快捷键、窗口句柄、剪贴板等 OS 能力 |
-| **离线可用** | 搭配本地 OCR 引擎和本地 LLM，无需网络即可完成自动化 |
-| **轻量小巧** | 使用系统原生 WebView，不捆绑 Chromium，安装包 < 20MB |
-
 ---
 
 ## 🏗️ 系统架构
 
-VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime 进行 IPC 通信，编译后生成单一原生桌面应用。
+VisuTask 基于 **Wails v3** 框架，Go 后端与 React 前端通过 Wails Runtime 进行 IPC 通信，编译后生成单一原生桌面应用。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  🖥️  VisuTask 桌面应用 (Wails)                 │
+│                  🖥️  VisuTask 桌面应用 (Wails v3)              │
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │              🎨 React 前端 (原生 WebView)                │  │
+│  │  shadcn/ui + Tailwind CSS + Lucide Icons               │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ │  │
-│  │  │ 脚本创建  │ │ 任务管理  │ │ 执行监控  │ │ 脚本库    │ │  │
-│  │  │Designer  │ │  Tasks   │ │ Monitor  │ │ Scripts  │ │  │
+│  │  │ 脚本创建  │ │ 脚本库   │ │ 任务管理  │ │ 脚本市场   │ │  │
+│  │  │ScriptNew │ │ Scripts  │ │  Tasks   │ │  Market   │ │  │
 │  │  └──────────┘ └──────────┘ └──────────┘ └───────────┘ │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐   │  │
-│  │  │ 定时调度  │ │ 实时预览  │ │ 执行日志              │   │  │
-│  │  │Scheduler │ │Live View │ │   Logs              │   │  │
-│  │  └──────────┘ └──────────┘ └──────────────────────┘   │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ │  │
+│  │  │ 用量统计  │ │ 新建任务  │ │ 任务监控  │ │   设置    │ │  │
+│  │  │  Stats   │ │ TaskNew  │ │ Monitor  │ │ Settings  │ │  │
+│  │  └──────────┘ └──────────┘ └──────────┘ └───────────┘ │  │
 │  └───────────────────────┬────────────────────────────────┘  │
-│                          │  Wails IPC (Bindings)              │
+│                          │  Wails IPC (Bindings + Events)     │
 │  ┌───────────────────────▼────────────────────────────────┐  │
 │  │                    ⚙️ Go 后端                            │  │
 │  │                                                         │  │
 │  │  ┌───────────────────────────────────────────────────┐ │  │
-│  │  │               🧠 Agent 调度核心                      │ │  │
-│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐│ │  │
-│  │  │  │ 任务解析 │ │ 计划生成 │ │ 模拟演示 │ │ 步骤执行  ││ │  │
-│  │  │  │ Parser  │ │ Planner │ │Simulate │ │ Executor ││ │  │
-│  │  │  └─────────┘ └─────────┘ └─────────┘ └──────────┘│ │  │
-│  │  │  ┌─────────┐                                      │ │  │
-│  │  │  │ 异常恢复 │                                      │ │  │
-│  │  │  │ Recovery │                                      │ │  │
-│  │  │  └─────────┘                                      │ │  │
+│  │  │               🧠 Agent 核心 (Agent Loop)           │ │  │
+│  │  │  Session → Loop → Processor → Tool → Memory       │ │  │
+│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌────────┐  │ │  │
+│  │  │  │ Planner │ │Executor │ │Reviewer │ │ Safety │  │ │  │
+│  │  │  │ Agent   │ │ Agent   │ │ Agent   │ │  Retry │  │ │  │
+│  │  │  └─────────┘ └─────────┘ └─────────┘ └────────┘  │ │  │
 │  │  └───────────────────────────────────────────────────┘ │  │
 │  │                                                         │  │
-│  │  ┌───────────────────────────────────────────────────┐ │  │
-│  │  │               👁️ 视觉感知层                          │ │  │
-│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐│ │  │
-│  │  │  │ 屏幕截图 │ │ OCR 引擎 │ │ 控件检测 │ │ 布局分析  ││ │  │
-│  │  │  │Capture  │ │   OCR   │ │Detection│ │ Layout   ││ │  │
-│  │  │  └─────────┘ └─────────┘ └─────────┘ └──────────┘│ │  │
-│  │  └───────────────────────────────────────────────────┘ │  │
-│  │                                                         │  │
-│  │  ┌───────────────────────────────────────────────────┐ │  │
-│  │  │               🖐️ 动作执行层                          │ │  │
-│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐│ │  │
-│  │  │  │ 鼠标操作 │ │ 键盘输入 │ │ 窗口管理 │ │ 剪贴板   ││ │  │
-│  │  │  │  Mouse  │ │Keyboard │ │ Window  │ │  Clip    ││ │  │
-│  │  │  └─────────┘ └─────────┘ └─────────┘ └──────────┘│ │  │
-│  │  └───────────────────────────────────────────────────┘ │  │
+│  │  ┌──────────────────┐ ┌───────────────────────────────┐│  │
+│  │  │ 👁️ 视觉感知层     │ │ 🖐️ 动作执行层                   ││  │
+│  │  │ kbinani/screenshot│ │ Windows user32.dll syscall    ││  │
+│  │  │ 远端 OCR 服务     │ │ 鼠标/键盘/窗口管理             ││  │
+│  │  └──────────────────┘ └───────────────────────────────┘│  │
 │  │                                                         │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ │  │
-│  │  │ 本地存储  │ │ 任务调度  │ │ LLM 网关  │ │ 全局快捷键 │ │  │
-│  │  │ SQLite   │ │  Cron    │ │ LLM GW   │ │  Hotkey   │ │  │
+│  │  │ LLM 网关  │ │ 并发管理  │ │ 定时调度  │ │ SQLite    │ │  │
+│  │  │Anthropic │ │ Slot+Win │ │  Cron    │ │  GORM     │ │  │
+│  │  │+OpenAI   │ │ Conflict │ │          │ │           │ │  │
 │  │  └──────────┘ └──────────┘ └──────────┘ └───────────┘ │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │                 🖥️ 操作系统层                             │  │
-│  │   Windows GDI / macOS CGWindow / Linux X11              │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -110,172 +84,17 @@ VisuTask 基于 **Wails** 框架，Go 后端与 React 前端通过 Wails Runtime
 
 | 模块 | 职责 | 技术实现 |
 |------|------|----------|
-| **Wails Runtime** | Go ↔ React 双向绑定通信 | Wails v3 原生 IPC |
-| **任务解析器 (Parser)** | 将自然语言描述的任务转为结构化指令 | Go + LLM API |
-| **计划生成器 (Planner)** | 根据屏幕状态和任务目标规划操作步骤序列 | Agent 推理链 / 分层规划 |
-| **模拟演示器 (Simulator)** | 逐步模拟操作（截图标注目标，不真正执行），供用户确认 | 截图 + OCR 标注 + 高亮覆盖 |
-| **并发管理器 (Concurrency)** | 多任务并发执行，槽位分配与上限控制 | Go channel + mutex |
-| **OCR 引擎** | 识别屏幕文字及其位置坐标（返回给前端标注） | Tesseract CGo / PaddleOCR gRPC |
-| **控件检测** | 定位按钮、输入框、下拉菜单等可交互元素 | GoCV (OpenCV) / 边缘检测 / 轮廓分析 |
-| **屏幕截图** | 高性能屏幕捕获，实时帧推送到前端预览 | Windows GDI / macOS CGWindow / X11 SHM |
-| **动作执行器** | 鼠标点击、键盘输入、拖拽等底层操作 | robotgo / Win32 user32.dll / XTest / CGEvent |
-| **执行监控 (Monitor)** | 每步操作后截图对比 + OCR 校验，判断成功/失败 | GoCV 直方图对比 + OCR diff |
-| **LLM 网关** | 统一管理多模型（云端 + 本地），自动 fallback | Go HTTP Client + 速率限制（构建时环境变量注入配置） |
-| **任务调度** | 定时触发任务、后台静默执行 | robfig/cron |
-| **全局快捷键** | 用户可注册全局热键，一键触发任务 | robotgo / 系统级 Hook |
-| **本地存储** | 任务模板、执行历史、配置的持久化 | SQLite (GORM) |
-
-### 数据流
-
-```
-═══ 阶段一：创建脚本 ═══
-
-[用户] 用自然语言描述要自动化的操作
-   │
-   ▼
-[Parser] 调用 LLM 解析意图
-   │
-   ▼
-[Planner] 截取屏幕 → OCR → 生成操作计划
-   │
-   ▼
-[Simulator] 逐步模拟演示（截图标注目标，不执行）
-   │
-   ├── 用户确认/修改/跳过/插入步骤
-   │
-   ▼
-[保存] 脚本模板存入 SQLite，可复用
-
-═══ 阶段二：创建任务 ═══
-
-[用户] 选择脚本 → 绑定窗口句柄 → 配置参数 → 设置触发方式
-   │
-   ▼
-[保存] 任务配置存入 SQLite（同一脚本可创建多个任务）
-
-═══ 阶段三：并发执行 ═══
-
-[用户] 启动多个任务（上限：普通用户 3 / VIP 最高 10）
-   │
-   ▼
-[Concurrency] 分配执行槽位，检查并发上限
-   │
-   ▼
-[Executor] 每个任务在绑定的窗口上独立执行
-   │
-   ├── 每步：定位窗口 → OCR → 键鼠操作 → 截图验证
-   ├── Wails Events 实时推送每个任务的进度
-   ├── 失败时 Recovery 介入（重试/回退/人工介入）
-   │
-   ▼
-[完成] 执行记录存入 SQLite → 前端展示结果报告
-```
-
----
-
-## 🚀 典型使用场景
-
-### 场景一：跨系统数据录入
-
-```
-用户: "把 Excel 里的 100 条客户信息逐一录入到网页 CRM 系统中"
-
-VisuTask:
-  1. Agent 解析意图，规划操作步骤
-  2. 模拟演示第一步：截图 Excel，OCR 标注第一行数据 → 用户确认
-  3. 模拟演示第二步：截图 CRM，标注"新增"按钮和各输入框 → 用户确认
-  4. 模拟演示第三步：标注"保存"按钮，验证成功提示 → 用户确认
-  5. 用户确认所有步骤 → 保存为任务模板
-  6. 正式执行：循环 100 次，每次录入一条数据
-```
-
-### 场景二：软件安装与配置
-
-```
-用户: "帮我安装 Python 3.12 并配置好环境变量"
-
-VisuTask:
-  1. Agent 规划安装步骤
-  2. 逐步模拟：打开安装程序 → 勾选 Add to PATH → Install → Finish
-  3. 用户确认每步操作目标和顺序
-  4. 保存为可复用模板
-  5. 正式执行 → 截图验证安装结果
-```
-
-### 场景三：定时办公自动化
-
-```
-用户: "每天 9 点打开企业微信，找到昨日未读消息并汇总"
-
-VisuTask:
-  1. Agent 规划：打开企业微信 → 定位未读消息 → 逐条读取 → 汇总
-  2. 逐步模拟并标注每个操作目标 → 用户确认
-  3. 保存模板 + 配置定时触发
-  4. 后台静默执行 → 生成汇总报告 → 弹窗通知
-```
-
-### 场景四：桌面应用回归测试
-
-```
-用户: "回归测试这个桌面应用的所有表单提交功能"
-
-VisuTask:
-  1. Agent 截图识别界面中所有表单和按钮
-  2. 自动生成测试用例（正常值、边界值、异常值）
-  3. 逐步模拟每个表单的填写和提交 → 用户确认
-  4. 正式执行 → OCR 校验提交结果 → 记录 Pass/Fail
-```
-
----
-
-## 🔧 技术选型
-
-### 桌面壳框架
-
-| 技术 | 说明 |
-|------|------|
-| **Wails v3** | Go + Web 前端 → 单一原生二进制，使用系统 WebView（WebView2/WKWebView/WebKitGTK），安装包 < 15MB |
-| **WebView2** (Windows) | Windows 10+ 预装，无需额外依赖 |
-| **WKWebView** (macOS) | macOS 系统内置 |
-| **WebKitGTK** (Linux) | 多数 Linux 发行版已预装 |
-
-### 前端 (React)
-
-| 类别 | 技术 | 说明 |
-|------|------|------|
-| **框架** | React 18 + TypeScript | 组件化 UI |
-| **构建** | Vite | Wails 原生集成，HMR 热更新 |
-| **UI 组件** | shadcn/ui + Tailwind CSS | 现代化可定制组件，按需引入 |
-| **图标** | Lucide (`lucide-react`) | shadcn/ui 官方配套，Tree-shakeable 按需加载 |
-| **任务创建** | Agent 模拟 + 对话确认 | 逐步演示、确认、自动生成任务文档 |
-| **状态管理** | Zustand | 轻量响应式状态 |
-| **实时通信** | Wails Runtime (Events) | Go → React 事件推送，无网络开销 |
-| **图表** | ECharts / AntV | 执行统计仪表盘 |
-
-### 后端 (Go)
-
-| 类别 | 技术 | 说明 |
-|------|------|------|
-| **语言** | Go 1.22+ | 高性能、交叉编译 |
-| **IPC 框架** | Wails v3 Bindings | 暴露 Go 函数给前端直接调用 |
-| **OCR** | Tesseract (CGo) / PaddleOCR gRPC | 离线文字识别 + 坐标 |
-| **视觉处理** | GoCV (OpenCV 绑定) | 模板匹配、轮廓检测、图像对比 |
-| **键鼠模拟** | robotgo + syscall | 跨平台鼠标/键盘/窗口操作 |
-| **屏幕捕获** | screenshot + GDI/X11/CG | 截图帧获取，并行推前端 |
-| **数据库** | SQLite (GORM) | 嵌入式，零配置，单文件存储 |
-| **任务调度** | robfig/cron | 定时任务，毫秒级精度 |
-| **LLM 集成** | 自建 LLM Gateway | 内部集成，构建时通过环境变量注入配置 |
-| **配置** | Viper | YAML 配置文件 |
-| **日志** | zap | 结构化高性能日志 |
-| **构建** | Wails build + NSIS (Win) / DMG (Mac) / AppImage (Linux) | |
-
-### 打包与分发
-
-| 平台 | 格式 | 体积 |
-|------|------|------|
-| **Windows** | `.exe` (NSIS 安装包) | ~15MB |
-| **macOS** | `.dmg` / `.app` | ~18MB |
-| **Linux** | `.AppImage` / `.deb` | ~16MB |
+| **Agent Loop** | while(true) 核心循环：加载上下文 → 调用 LLM → 处理工具 → 评估结果 | 参考 OpenCode 架构 |
+| **LLM 网关** | Anthropic 协议为主，兼容 OpenAI/Ollama，自动 fallback | Go HTTP + SSE 流式 |
+| **Tool 系统** | 11 个 GUI 专用工具：截图、OCR、点击、输入、验证等 | 声明式定义 + 注册表 |
+| **OCR** | 远端 OCR 服务，返回文字 + 坐标 + 置信度 | HTTP API (可配置) |
+| **屏幕截图** | 纯 Go 截图，支持全屏/区域/窗口 | kbinani/screenshot |
+| **鼠标/键盘** | Windows user32.dll 系统调用，无 CGo 依赖 | syscall + SendInput |
+| **窗口管理** | 枚举窗口、聚焦、按标题查找 | EnumWindows + SetForegroundWindow |
+| **并发管理** | 任务槽位分配 + 窗口冲突检测 | Go mutex |
+| **上下文压缩** | 两阶段：丢弃截图 → LLM 总结旧消息 | 自动触发 |
+| **安全机制** | Doom Loop 检测（同一工具连续重复 3 次报警） | 滑动窗口 |
+| **持久化** | 脚本、任务、执行记录、用户 | SQLite + GORM |
 
 ---
 
@@ -283,458 +102,240 @@ VisuTask:
 
 ```
 VisuTask/
-├── app.go                          # Wails 应用入口，注册 Go ↔ 前端绑定
-├── main.go                         # 程序主入口
-├── wails.json                      # Wails 项目配置
+├── main.go                         # 程序入口 + Wails 应用组装
+├── go.mod / go.sum                 # Go 模块
+├── config.example.yaml             # 配置模板
 │
-├── frontend/                       # React 前端 (Wails 自动识别)
-│   └── src/
-│       ├── App.tsx                 # 根组件
-│       ├── main.tsx                # 前端入口
-│       ├── pages/
-│       │   ├── Dashboard/          # 仪表盘首页（概览、并发状态、统计）
-│       │   ├── ScriptNew/          # 脚本创建向导（Agent 模拟 + 确认）
-│       │   ├── Scripts/            # 脚本库管理
-│       │   ├── Tasks/              # 任务管理（绑定脚本+句柄+并发）
-│       │   ├── Monitor/            # 执行监控面板（实时并发状态）
-│       │   ├── ExecutionLog/       # 执行日志与截图回放
-│       │   ├── ScreenLive/         # 实时屏幕预览
-│       │   └── Settings/           # 系统设置（账户/钱包/快捷键/外观/关于）
-│       ├── components/
-│       │   ├── TaskWizard/         # 脚本创建向导（步骤确认面板）
-│       │   ├── TaskCard/           # 执行监控任务卡片
-│       │   ├── ScreenViewer/       # 屏幕查看器（标注 OCR 结果）
-│       │   ├── ResultDiff/         # 执行前后截图对比
-│       │   └── StatusBar/          # 底部状态栏
-│       ├── hooks/
-│       │   ├── useAgent.ts         # 调用 Go Agent 绑定方法
-│       │   ├── useScreenCapture.ts # 订阅屏幕截图事件流
-│       │   └── useHotkey.ts        # 全局快捷键注册
-│       ├── stores/                 # Zustand 状态管理
-│       ├── bindings/               # Wails 自动生成的 Go 绑定类型
-│       └── assets/                 # 静态资源
+├── frontend/                       # React 前端
+│   ├── src/
+│   │   ├── App.tsx                 # 路由配置 (9 页面)
+│   │   ├── main.tsx                # 入口
+│   │   ├── pages/                  # 页面组件
+│   │   │   ├── Home.tsx            # 首页 (5 卡片入口)
+│   │   │   ├── ScriptNew.tsx       # 创建脚本 (AI对话+MD预览)
+│   │   │   ├── Scripts.tsx         # 脚本库 (Tab+列表)
+│   │   │   ├── Market.tsx          # 脚本市场 (Tab+表格)
+│   │   │   ├── Stats.tsx           # 用量统计 (图表)
+│   │   │   ├── Tasks.tsx           # 任务管理 (可展开表格)
+│   │   │   ├── TaskNew.tsx         # 新建任务 (表单)
+│   │   │   ├── TaskMonitor.tsx     # 任务监控 (实时画面+日志)
+│   │   │   └── Settings.tsx        # 设置 (5 Tab)
+│   │   ├── components/
+│   │   │   ├── layout/             # Header, StatusBar, Breadcrumb
+│   │   │   └── ui/                 # shadcn/ui 组件 (19个)
+│   │   ├── mock/                   # Mock 数据
+│   │   ├── stores/                 # Zustand 状态
+│   │   └── types/                  # TypeScript 类型
+│   └── dist/                       # 构建产物 (嵌入到 Go)
 │
-├── internal/                       # Go 后端核心逻辑
-│   ├── agent/                      # Agent 调度核心
-│   │   ├── parser.go               # 任务解析器 (NL → 结构化计划)
-│   │   ├── planner.go              # 计划生成器
-│   │   ├── simulator.go            # 模拟演示器（截图标注，不执行）
-│   │   ├── executor.go             # 步骤执行器
-│   │   ├── memory.go               # 短期/长期记忆
-│   │   └── recovery.go             # 异常恢复策略
-│   ├── vision/                     # 视觉感知模块
-│   │   ├── capture.go              # 屏幕截图
-│   │   ├── ocr.go                  # OCR 识别引擎
-│   │   ├── detection.go            # UI 控件检测
-│   │   ├── matching.go             # 图像模板匹配
-│   │   └── layout.go               # 布局结构分析
-│   ├── action/                     # 动作执行模块
-│   │   ├── mouse.go                # 鼠标操作
-│   │   ├── keyboard.go             # 键盘操作
-│   │   ├── window.go               # 窗口查找与管理
-│   │   └── clipboard.go            # 剪贴板读写
-│   ├── monitor/                    # 监控与验证
-│   │   ├── checker.go              # 步骤结果校验
-│   │   └── logger.go               # 执行日志与截图序列
+├── internal/                       # Go 后端
+│   ├── agent/                      # Agent 核心
+│   │   ├── loop.go                 # Agent Loop 核心循环
+│   │   ├── processor.go            # Anthropic SSE 流处理器
+│   │   ├── tool.go                 # Tool 定义 + 注册表
+│   │   ├── session.go              # Session 管理
+│   │   ├── memory.go               # 上下文管理 + 压缩
+│   │   ├── safety.go               # Doom Loop 检测
+│   │   ├── retry.go                # 指数退避重试
+│   │   ├── event.go                # 事件总线 (10 种事件)
+│   │   ├── service.go              # 服务入口 (组装子系统)
+│   │   ├── builtin.go              # 3 个内置 Agent
+│   │   └── tools/tools.go          # 11 个 GUI 工具
 │   ├── llm/                        # LLM 网关
-│   │   ├── gateway.go              # 多模型路由 + 重试
-│   │   ├── openai.go               # OpenAI 适配器
-│   │   ├── claude.go               # Claude 适配器
-│   │   └── ollama.go               # Ollama 本地模型适配器
-│   ├── scheduler/                  # 定时任务
-│   │   └── cron.go                 # Cron 调度管理
-│   ├── hotkey/                     # 全局快捷键
-│   │   └── hook.go                 # 系统级热键注册
+│   │   ├── gateway.go              # 统一入口 + Anthropic 消息模型
+│   │   ├── anthropic.go            # Anthropic Messages API (主协议)
+│   │   └── openai.go               # OpenAI/Ollama 适配器
+│   ├── vision/                     # 视觉感知
+│   │   ├── engine.go               # 引擎 + 接口定义
+│   │   ├── capture.go              # kbinani/screenshot 截图
+│   │   ├── ocr.go                  # 远端 OCR HTTP 客户端
+│   │   └── stub.go                 # Stub 实现 (降级)
+│   ├── action/                     # 动作执行 (Windows syscall)
+│   │   ├── engine.go               # 引擎 + 接口定义
+│   │   ├── mouse.go                # user32.dll 鼠标
+│   │   ├── keyboard.go             # SendInput 键盘 (Unicode)
+│   │   ├── window.go               # EnumWindows 窗口
+│   │   └── stub.go                 # Stub 实现 (降级)
+│   ├── config/                     # 配置加载
+│   │   └── config.go               # YAML + 环境变量覆盖
 │   ├── concurrency/                # 并发管理
-│   │   └── manager.go              # 槽位分配/释放 + 上限控制
-│   ├── model/                      # 数据模型
-│   │   ├── script.go               # 脚本定义
-│   │   ├── task.go                 # 任务定义（脚本+句柄+参数）
-│   │   ├── execution.go            # 执行记录
-│   │   └── user.go                 # 用户 + VIP 等级
-│   └── store/                      # 持久化层
-│       ├── sqlite.go               # SQLite GORM 初始化
-│       └── repository.go           # 仓储接口
+│   │   └── manager.go              # 槽位 + 窗口冲突
+│   ├── monitor/                    # 步骤验证
+│   │   └── checker.go              # OCR 验证
+│   ├── scheduler/                  # 定时调度
+│   │   └── cron.go                 # robfig/cron
+│   ├── hotkey/                     # 全局快捷键
+│   │   └── hook.go                 # 热键注册
+│   ├── model/                      # 数据模型 (GORM)
+│   │   ├── script.go, task.go, execution.go, user.go, window.go
+│   └── store/                      # 持久化
+│       ├── sqlite.go               # SQLite 初始化
+│       └── repository.go           # CRUD 仓储
 │
-├── pkg/                            # 可复用公共包
-│   ├── screenshot/                 # 跨平台高性能截图
-│   ├── keymouse/                   # 跨平台键鼠封装
-│   └── ocrclient/                  # OCR 客户端抽象
-│
-├── scripts/                        # 构建/签名脚本
-│   ├── build.bat                   # Windows 构建
-│   ├── build.sh                    # macOS/Linux 构建
-│   └── installer.nsi               # NSIS 安装包脚本
-├── config/                         # 默认配置
-│   └── config.example.yaml
-├── docs/                           # 文档
-├── go.mod
-├── go.sum
-├── .gitignore
-├── README.md
-└── LICENSE
+└── docs/                           # 设计文档
+    ├── ui-design.md                # 前端 UI 设计 (9 页面线框图)
+    ├── business-modules.md         # 业务模块设计 (Agent 架构)
+    ├── design-system.md            # 前端设计规范 (色彩/字号/间距)
+    └── components.md               # 公共组件规划
 ```
 
 ---
 
-## 🎯 项目路线图
+## 🔧 技术选型
 
-### Phase 1 — 基础能力（MVP）
-- [ ] Wails 项目初始化，Go ↔ React 通信贯通
-- [ ] 屏幕截图与区域选择（前端标注 OCR 结果）
-- [ ] 集成 Tesseract OCR，实现屏幕文字识别与坐标定位
-- [ ] 基础键鼠操作（点击、输入、拖拽、快捷键、滚轮）
-- [ ] 任务脚本 JSON 定义与顺序执行
-- [ ] 执行日志与截图序列存储
-- [ ] 前端任务列表 + 手动创建任务界面
+### 前端
 
-### Phase 2 — Agent 智能化
-- [ ] LLM 网关：统一接入 OpenAI / Claude / Ollama 本地模型
-- [ ] 自然语言任务解析（NL Prompt → 结构化操作序列）
-- [ ] Agent 分层规划：屏幕感知 → 意图理解 → 步骤分解
-- [ ] 步骤级截图验证 + 自动重试/回退机制
-- [ ] 前端实时执行进度展示（步骤动画 + 截图流）
+| 类别 | 技术 | 说明 |
+|------|------|------|
+| **框架** | React 18 + TypeScript | 组件化 UI |
+| **构建** | Vite | HMR 热更新 |
+| **UI 组件** | shadcn/ui + Tailwind CSS | 按需引入，CSS 变量主题 |
+| **图标** | Lucide (`lucide-react`) | shadcn/ui 官方配套 |
+| **图表** | Recharts | 用量统计折线图/条形图 |
+| **Markdown** | react-markdown + remark-gfm | 脚本预览渲染 |
+| **状态管理** | Zustand | 轻量响应式状态 |
+| **通知** | Sonner | Toast 通知 |
 
-### Phase 3 — 脚本与任务系统
-- [ ] 脚本创建向导：Agent 逐步模拟演示 + 用户确认交互
-- [ ] 截图标注高亮：OCR 识别结果 + 目标区域可视化标注
-- [ ] 脚本库管理：CRUD、复制、版本记录
-- [ ] 任务配置：绑定脚本 + 窗口句柄 + 参数 + 触发方式
-- [ ] 并发执行：多任务同时运行，槽位管理
-- [ ] 用户等级：普通用户 3 并发 / VIP 1-5 级（5-10 并发）
-- [ ] 执行监控面板：卡片式实时状态 + 日志流
+### 后端
 
-### Phase 4 — 生产增强
-- [ ] 定时任务：Cron 后台静默执行 + 系统托盘驻留
-- [ ] 全局快捷键：一键触发指定任务
-- [ ] 执行仪表盘：成功率、耗时统计、热力分析 (ECharts)
-- [ ] 任务模板导入/导出（JSON/YAML）
-- [ ] 系统托盘 + 后台运行模式
-
-### Phase 5 — 生态与分发
-- [ ] 插件体系（gRPC 接口，自定义 OCR/执行器/LLM）
-- [ ] 任务市场（社区共享模板 + 一键安装）
-- [ ] 交叉编译 + 自动构建流水线 (GitHub Actions)
-- [ ] Windows (.exe) / macOS (.dmg) / Linux (.AppImage) 三平台发布
-- [ ] 自动更新机制
+| 类别 | 技术 | 说明 |
+|------|------|------|
+| **语言** | Go 1.26+ | 纯 Go，无 CGo 依赖 |
+| **桌面框架** | Wails v3 | Go ↔ React IPC + 嵌入式前端 |
+| **LLM** | Anthropic Messages API | 主协议，SSE 流式，兼容 OpenAI |
+| **OCR** | 远端 HTTP API | 可配置 endpoint，返回文字+坐标 |
+| **截图** | kbinani/screenshot | 纯 Go 跨平台截图 |
+| **键鼠** | Windows syscall | user32.dll + SendInput (Unicode) |
+| **数据库** | SQLite + GORM | 嵌入式，自动迁移 |
+| **定时任务** | robfig/cron | Cron 表达式调度 |
+| **重试** | cenkalti/backoff | 指数退避 + retry-after |
+| **配置** | YAML + 环境变量 | gopkg.in/yaml.v3 |
 
 ---
 
-## 🔨 快速开始
+## ⚙️ 配置
 
-> ⚠️ 项目处于早期规划阶段，以下为预期开发流程。
+复制 `config.example.yaml` 到 `~/.visutask/config.yaml`：
 
-### 开发环境要求
+```yaml
+llm:
+  primary: anthropic
+  anthropic:
+    api_key: "sk-ant-xxx"
+    model: "claude-sonnet-4-20250514"
+  openai:
+    api_key: "sk-xxx"
+    model: "gpt-4o"
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "llama3"
+  fallback_order: [anthropic, openai, ollama]
+
+ocr:
+  endpoint: "https://api.deepseek.com/v1/ocr"
+  api_key: "sk-xxx"
+
+agent:
+  planner_max_steps: 20
+  executor_max_steps: 100
+  tool_timeout: 30          # 秒
+  doom_loop_threshold: 3
+  context_window: 128000    # tokens
+
+concurrency:
+  default_max: 3
+```
+
+**配置优先级：** 默认值 → YAML 文件 → 环境变量（最高）
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
 
 | 工具 | 版本 | 用途 |
 |------|------|------|
-| **Go** | >= 1.22 | 后端开发 |
-| **Node.js** | >= 20 LTS | 前端构建 |
-| **pnpm** | >= 9 | 包管理器 |
-| **Wails CLI** | v3 | 项目脚手架、热重载、构建打包 |
-| **Tesseract** | >= 5.0 | OCR 引擎开发库 |
-| **GCC / MinGW** | (Windows) | CGo 编译 Tesseract |
-| **WebView2** | (Windows) | Windows 10+ 预装 |
+| **Go** | >= 1.22 | 后端编译 |
+| **Node.js** | >= 20 | 前端构建 |
+| **pnpm** | >= 9 | 包管理 |
+| **Wails CLI** | v3 | `go install github.com/wailsapp/wails/v3/cmd/wails3@latest` |
+| **WebView2** | — | Windows 10+ 预装 |
 
-### 安装 Wails
-
-```bash
-# 安装 Wails CLI
-go install github.com/wailsapp/wails/v3/cmd/wails3@latest
-
-# 验证安装
-wails3 doctor
-```
-
-### 安装 OCR 引擎
-
-```bash
-# Windows: 下载安装
-# https://github.com/UB-Mannheim/tesseract/wiki
-
-# macOS
-brew install tesseract
-
-# Linux (Debian/Ubuntu)
-sudo apt install tesseract-ocr libtesseract-dev
-
-# 下载中文语言包
-# https://github.com/tesseract-ocr/tessdata
-```
-
-### 克隆并运行
+### 安装与运行
 
 ```bash
 # 克隆仓库
 git clone https://github.com/yc446833448/VisuTask.git
 cd VisuTask
 
-# 安装前端依赖
-cd frontend && pnpm install && cd ..
+# 复制配置文件并填入 API Key
+cp config.example.yaml ~/.visutask/config.yaml
 
-# 开发模式（热重载，前端 HMR + Go 自动重编译）
+# 安装前端依赖并构建
+cd frontend && pnpm install && pnpm build && cd ..
+
+# 开发模式 (前端 HMR + Go 热重载)
 wails3 dev
 
-# 构建生产版本
+# 生产构建
 wails3 build
-
-# 构建产物位于 build/bin/ 目录
+# 产物位于 build/bin/
 ```
 
-### 开发模式体验
+### 前端独立开发
 
 ```bash
-wails3 dev
+cd frontend
+pnpm dev
+# 访问 http://localhost:5173 (使用 mock 数据)
 ```
-
-- Go 代码修改 → 自动重编译重启
-- React 代码修改 → Vite HMR 毫秒级热更新
-- Wails 自动打开桌面窗口，内嵌 WebView 加载前端页面
-- 前端通过 `wailsjs/go` 模块直接调用 Go 函数（类型安全 + IDE 自动补全）
 
 ---
 
-### 基础使用示例
+## 🎯 项目路线图
 
-#### Go 后端 — 暴露给前端的绑定方法
+### Phase 1 — 基础能力 ✅
+- [x] Wails v3 项目初始化，Go ↔ React 通信
+- [x] 屏幕截图 (kbinani/screenshot)
+- [x] 远端 OCR 服务集成
+- [x] 鼠标/键盘/窗口操作 (Windows syscall)
+- [x] SQLite 数据持久化 (GORM)
+- [x] 前端 9 页面 + mock 数据
 
-```go
-// internal/agent/service.go
-package agent
+### Phase 2 — Agent 智能化 ✅
+- [x] LLM 网关：Anthropic (主) + OpenAI + Ollama
+- [x] Agent Loop 核心循环 (参考 OpenCode)
+- [x] 11 个 GUI 专用工具
+- [x] 上下文管理 + 两阶段压缩
+- [x] Doom Loop 检测 + 指数退避重试
+- [x] YAML 配置系统
 
-import (
-    "context"
-    "github.com/wailsapp/wails/v3/pkg/application"
-)
+### Phase 3 — 脚本与任务系统
+- [ ] 脚本创建向导：Agent 对话 → 生成脚本
+- [ ] 截图标注高亮：OCR 结果可视化标注
+- [ ] 脚本库管理：CRUD + 复制
+- [ ] 任务配置：绑定脚本 + 窗口 + 参数
+- [ ] 并发执行：多任务同时运行 + 窗口冲突检测
+- [ ] 用户等级：普通 3 / VIP 1-5 (5-10)
+- [ ] 执行监控面板：实时画面 + Agent 日志流
 
-type AgentService struct {
-    parser   *Parser
-    planner  *Planner
-    executor *Executor
-    ocr      *vision.OCREngine
-}
+### Phase 4 — 生产增强
+- [ ] 定时任务：Cron 后台执行 + 系统托盘
+- [ ] 全局快捷键：一键触发任务
+- [ ] 执行仪表盘：成功率、耗时统计
+- [ ] 脚本模板导入/导出
+- [ ] 控件检测 (OpenCV / 边缘检测)
 
-// CreateTaskPlan 根据自然语言描述生成任务计划，供前端展示确认
-func (a *AgentService) CreateTaskPlan(description string) (*TaskPlan, error) {
-    // 1. LLM 解析自然语言意图
-    intent, err := a.parser.Parse(context.Background(), description)
-    if err != nil {
-        return nil, err
-    }
-
-    // 2. 截图 + OCR 感知当前屏幕状态
-    screenshot := captureScreen()
-    ocrResults := a.ocr.Recognize(screenshot)
-
-    // 3. 结合意图和屏幕状态生成操作计划
-    plan, err := a.planner.GeneratePlan(context.Background(), intent, screenshot, ocrResults)
-    if err != nil {
-        return nil, err
-    }
-
-    return plan, nil
-}
-
-// SimulateStep 模拟执行单个步骤（不真正操作，仅截图标注目标）
-func (a *AgentService) SimulateStep(stepIndex int, plan *TaskPlan) (*StepSimulation, error) {
-    step := plan.Steps[stepIndex]
-
-    // 截图 → OCR → 定位目标区域 → 生成标注图
-    screenshot := captureScreen()
-    ocrResults := a.ocr.Recognize(screenshot)
-    target := a.planner.LocateTarget(screenshot, ocrResults, step.Target)
-
-    return &StepSimulation{
-        StepIndex:  stepIndex,
-        Action:     step.Action,
-        Target:     step.Target,
-        Screenshot: screenshot,    // base64 截图
-        Annotation: target.Overlay, // 标注框高亮目标区域
-        Confidence: target.Score,   // 匹配置信度
-    }, nil
-}
-
-// ConfirmAndSave 用户确认所有步骤后保存为任务模板
-func (a *AgentService) ConfirmAndSave(plan *TaskPlan, name string) (*Task, error) {
-    task := &Task{
-        Name:    name,
-        Steps:   plan.Steps,
-        Created: time.Now(),
-    }
-    return a.store.SaveTask(task)
-}
-
-// RunTask 正式执行已确认的任务
-func (a *AgentService) RunTask(taskID string) (*ExecutionResult, error) {
-    task, err := a.store.GetTask(taskID)
-    if err != nil {
-        return nil, err
-    }
-
-    for i, step := range task.Steps {
-        // 推送进度到前端
-        application.Get().EmitEvent("step:progress", StepProgress{
-            Index:      i + 1,
-            Total:      len(task.Steps),
-            Action:     step.Action,
-            Target:     step.Target,
-            Screenshot: captureScreen(),
-        })
-
-        if err := a.executor.ExecuteStep(ctx, step); err != nil {
-            application.Get().EmitEvent("step:error", err)
-        }
-    }
-
-    return result, nil
-}
-```
-
-#### React 前端 — 任务创建向导
-
-```tsx
-// pages/Designer/index.tsx
-import {
-  CreateTaskPlan,
-  SimulateStep,
-  ConfirmAndSave,
-  RunTask,
-} from "@wailsjs/go/agent/AgentService";
-import { EventsOn } from "@wailsjs/runtime/runtime";
-
-function TaskWizard() {
-  const [description, setDescription] = useState("");
-  const [plan, setPlan] = useState<TaskPlan | null>(null);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [simulation, setSimulation] = useState<StepSimulation | null>(null);
-
-  // 第一步：用户描述任务，Agent 生成计划
-  const handleCreate = async () => {
-    const plan = await CreateTaskPlan(description);
-    setPlan(plan);
-    setCurrentStep(0);
-  };
-
-  // 第二步：逐步模拟演示，用户确认
-  const handleSimulate = async () => {
-    if (!plan) return;
-    const sim = await SimulateStep(currentStep, plan);
-    setSimulation(sim);
-  };
-
-  // 用户确认当前步骤，进入下一步
-  const handleConfirmStep = () => {
-    if (plan && currentStep < plan.steps.length - 1) {
-      setCurrentStep(currentStep + 1);
-      handleSimulate();
-    }
-  };
-
-  // 全部确认，保存任务模板
-  const handleSave = async () => {
-    if (!plan) return;
-    const task = await ConfirmAndSave(plan, description);
-    console.log("任务已保存:", task);
-  };
-
-  // 正式执行
-  const handleRun = async () => {
-    const result = await RunTask(plan?.taskID);
-    console.log("执行完成:", result);
-  };
-
-  // 监听执行进度
-  EventsOn("step:progress", (p: StepProgress) => {
-    console.log(`执行中: ${p.index}/${p.total} - ${p.action}`);
-  });
-
-  return (
-    <div>
-      {/* 输入区 */}
-      <Textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="描述你的任务，例如：打开浏览器访问 GitHub 搜索 RPA"
-      />
-      <Button onClick={handleCreate}>生成计划</Button>
-
-      {/* 步骤确认区 */}
-      {plan && (
-        <div>
-          <h3>
-            步骤 {currentStep + 1}/{plan.steps.length}：
-            {plan.steps[currentStep].action} - {plan.steps[currentStep].target}
-          </h3>
-          <Button onClick={handleSimulate}>模拟演示</Button>
-
-          {simulation && (
-            <div>
-              {/* 截图 + OCR 标注高亮 */}
-              <img src={`data:image/png;base64,${simulation.screenshot}`} />
-              <img
-                src={`data:image/png;base64,${simulation.annotation}`}
-                style={{ position: "absolute" }}
-              />
-              <p>置信度: {(simulation.confidence * 100).toFixed(1)}%</p>
-            </div>
-          )}
-
-          <Button onClick={handleConfirmStep}>确认此步</Button>
-          <Button onClick={handleSave}>保存任务</Button>
-          <Button onClick={handleRun}>正式执行</Button>
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-#### 脚本模板（Agent 自动生成）
-
-```json
-{
-  "id": "script_001",
-  "name": "数据录入 CRM",
-  "description": "将 Excel 客户信息逐条录入到网页 CRM 系统",
-  "variables": {
-    "loopCount": "100",
-    "startRow": "2"
-  },
-  "steps": [
-    { "id": 1, "action": "click",  "target": "新建按钮",    "targetOCR": "新建",   "confidence": 0.95 },
-    { "id": 2, "action": "input",  "target": "姓名输入框",   "targetOCR": "姓名",   "value": "{{name}}", "confidence": 0.92 },
-    { "id": 3, "action": "input",  "target": "电话输入框",   "targetOCR": "电话",   "value": "{{phone}}", "confidence": 0.91 },
-    { "id": 4, "action": "click",  "target": "保存按钮",    "targetOCR": "保存",   "confidence": 0.98 },
-    { "id": 5, "action": "verify", "target": "保存成功提示",  "targetOCR": "保存成功", "timeout": 5000, "confidence": 0.88 }
-  ],
-  "createdAt": "2026-06-17T10:30:00Z"
-}
-```
-
-#### 执行任务（绑定脚本 + 窗口）
-
-```json
-{
-  "id": "task_001",
-  "name": "数据录入 CRM — 批次A",
-  "scriptId": "script_001",
-  "scriptName": "数据录入 CRM",
-  "windowHandle": "0x001A0F3C",
-  "windowTitle": "Excel - 客户数据.xlsx",
-  "parameters": {
-    "loopCount": "50",
-    "startRow": "2"
-  },
-  "trigger": { "type": "manual" },
-  "status": "running"
-}
-```
+### Phase 5 — 生态与分发
+- [ ] 脚本市场：社区共享 + 一键导入
+- [ ] 交叉编译 + CI/CD
+- [ ] Windows / macOS / Linux 三平台发布
+- [ ] 自动更新机制
 
 ---
 
 ## 🤝 贡献指南
-
-本项目处于早期开发阶段，欢迎各种形式的贡献：
 
 1. **Fork** 本仓库
 2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
@@ -744,34 +345,32 @@ function TaskWizard() {
 
 ### 开发规范
 
-- **前端**：ESLint + Prettier，遵循 React 最佳实践
-- **后端**：`gofmt` + `golangci-lint`，遵循 Effective Go
+- **前端**：遵循 `docs/design-system.md` 设计规范
+- **后端**：`gofmt`，遵循 Effective Go
 - **Commit**：遵循 Conventional Commits
-- **Wails 绑定**：Go 导出函数遵循 Wails 命名约定，自动生成前端类型
+- **Agent 工具**：声明式定义，注册到 ToolRegistry
 
 ---
 
 ## 📄 许可证
 
-本项目基于 MIT 许可证开源，详见 [LICENSE](LICENSE) 文件。
+MIT License — 详见 [LICENSE](LICENSE)
 
 ---
 
 ## 🙏 致谢
 
-- [Wails](https://wails.io/) — Go + Web 前端的桌面应用框架
-- [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) — Google 开源 OCR 引擎
-- [GoCV](https://github.com/hybridgroup/gocv) — Go 语言 OpenCV 绑定
-- [robotgo](https://github.com/go-vgo/robotgo) — Go 跨平台桌面自动化
-- [shadcn/ui](https://ui.shadcn.com/) — 现代化可定制 React 组件库
-- [Lucide](https://lucide.dev/) — 现代 SVG 图标库，shadcn/ui 官方配套
-- [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) — 自主 AI Agent
-- [OmniParser](https://microsoft.github.io/OmniParser/) — 微软屏幕理解模型
+- [Wails](https://wails.io/) — Go + Web 桌面应用框架
+- [OpenCode](https://github.com/anomalyco/opencode) — Agent Loop 架构参考
+- [Anthropic](https://www.anthropic.com/) — Claude API
+- [shadcn/ui](https://ui.shadcn.com/) — React 组件库
+- [Lucide](https://lucide.dev/) — SVG 图标库
+- [kbinani/screenshot](https://github.com/kbinani/screenshot) — 纯 Go 截图
 
 ---
 
 <p align="center">
   <b>VisuTask</b> — 让 AI 看懂屏幕，替你动手<br>
-  单一原生应用 · 双击即用 · 离线可用<br>
+  单一原生应用 · 双击即用<br>
   Made with ❤️ by <a href="https://github.com/yc446833448">yc446833448</a>
 </p>

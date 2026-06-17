@@ -1013,11 +1013,9 @@ type User struct {
 
 | 文件 | 职责 | 关键接口 |
 |------|------|----------|
-| `capture.go` | 屏幕截图（全屏/区域） | `CaptureScreen() ([]byte, error)` / `CaptureRegion(rect Rect) ([]byte, error)` |
-| `ocr.go` | 文字识别 + 坐标定位 | `Recognize(image []byte) ([]OCRResult, error)` |
+| `capture.go` | 屏幕截图（全屏/区域/窗口） | `CaptureScreen() ([]byte, error)` / `CaptureRegion(rect Rect) ([]byte, error)` / `CaptureWindow(handle string) ([]byte, error)` |
+| `ocr.go` | 远端 OCR 服务，文字识别 + 坐标定位 | `Recognize(image []byte) ([]OCRResult, error)` |
 | `detection.go` | UI 控件检测（按钮、输入框等） | `DetectControls(image []byte) ([]Control, error)` |
-| `matching.go` | 图像模板匹配 | `MatchTemplate(screen, template []byte) (*MatchResult, error)` |
-| `layout.go` | 布局结构分析 | `AnalyzeLayout(image []byte) (*LayoutTree, error)` |
 
 ### 数据模型
 
@@ -1044,14 +1042,13 @@ type Rect struct {
 
 ## 3. 动作执行层 (`internal/action/`)
 
-负责"动手操作"——鼠标、键盘、窗口、剪贴板。
+负责"动手操作"——鼠标、键盘、窗口。当前使用 Windows user32.dll syscall 实现，无 CGo 依赖。
 
 | 文件 | 职责 | 关键接口 |
 |------|------|----------|
-| `mouse.go` | 鼠标操作 | `Click(x, y int)` / `DoubleClick()` / `RightClick()` / `Drag(from, to Point)` / `Scroll(x, y, delta int)` |
-| `keyboard.go` | 键盘操作 | `Type(text string)` / `HotKey(keys ...string)` / `KeyDown()` / `KeyUp()` |
-| `window.go` | 窗口管理 | `FindWindow(title string) (*Window, error)` / `Focus()` / `Move()` / `Resize()` / `ListWindows()` |
-| `clipboard.go` | 剪贴板 | `GetText() (string, error)` / `SetText(text string) error` |
+| `mouse.go` | 鼠标操作 (WinMouse, user32.dll) | `Click(x, y int)` / `DoubleClick()` / `RightClick()` / `Drag(from, to Point)` / `Scroll(x, y, delta int)` |
+| `keyboard.go` | 键盘操作 (WinKeyboard, SendInput) | `Type(text string)` / `HotKey(keys ...string)` / `KeyPress(key string)` |
+| `window.go` | 窗口管理 (WinWindow, EnumWindows) | `FindWindow(title string)` / `Focus(handle string)` / `List()` / `Move()` |
 
 ---
 

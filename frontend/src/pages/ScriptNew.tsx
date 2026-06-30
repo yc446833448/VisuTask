@@ -1,20 +1,51 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import { Breadcrumb } from '@/components/layout/Breadcrumb'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
-import { Send } from 'lucide-react'
+import { Save, Send } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { mockChatMessages, mockScriptMarkdown } from '@/mock/chat'
+import { mockScripts } from '@/mock/scripts'
 import { mockWindows } from '@/mock/tasks'
-import type { ChatMessage } from '@/types'
+import { toast } from 'sonner'
+import type { ChatMessage, Script } from '@/types'
 
 export default function ScriptNew() {
-  const [messages, setMessages] = useState<ChatMessage[]>(mockChatMessages)
+  const { id } = useParams<{ id?: string }>()
+  const isEdit = Boolean(id)
+
+  const [scriptName, setScriptName] = useState('')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
-  const [scriptContent] = useState(mockScriptMarkdown)
+  const [scriptContent, setScriptContent] = useState('')
+
+  // Load script data if editing
+  useEffect(() => {
+    if (id) {
+      const script = mockScripts.find((s) => s.id === id)
+      if (script) {
+        setScriptName(script.name)
+        setScriptContent(buildMarkdown(script))
+        setMessages([
+          {
+            id: 'init_1',
+            role: 'assistant',
+            content: `正在编辑脚本「${script.name}」。你可以在左侧对话框调整步骤，右侧预览会实时更新。`,
+            timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ])
+      }
+    } else {
+      // Create mode: show the demo chat
+      setMessages(mockChatMessages)
+      setScriptContent(mockScriptMarkdown)
+    }
+  }, [id])
 
   const handleSend = () => {
     if (!input.trim()) return
@@ -24,7 +55,7 @@ export default function ScriptNew() {
       content: input,
       timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
     }
-    setMessages([...messages, userMsg])
+    setMessages((prev) => [...prev, userMsg])
     setInput('')
 
     // Simulate AI response
@@ -46,10 +77,24 @@ export default function ScriptNew() {
     }
   }
 
+  const handleSave = () => {
+    toast.success(isEdit ? '脚本已更新' : '脚本已创建')
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <div className="px-6 pt-4">
-        <Breadcrumb items={[{ label: '创建脚本' }]} />
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 pt-4">
+        <Breadcrumb
+          items={[
+            { label: '脚本库', path: '/scripts' },
+            { label: isEdit ? `编辑: ${scriptName}` : '创建脚本' },
+          ]}
+        />
+        <Button size="sm" onClick={handleSave}>
+          <Save className="h-4 w-4" />
+          {isEdit ? '更新脚本' : '保存脚本'}
+        </Button>
       </div>
 
       <div className="flex flex-1 gap-0 overflow-hidden mt-4">
@@ -92,7 +137,7 @@ export default function ScriptNew() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="输入消息..."
+                placeholder="描述需要修改的内容..."
                 className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm min-h-[40px] max-h-[100px] focus:outline-none focus:ring-2 focus:ring-ring"
                 rows={1}
               />
@@ -106,7 +151,6 @@ export default function ScriptNew() {
 
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">🔗</span>
                 <Select>
                   <SelectTrigger className="h-8 w-44">
                     <SelectValue placeholder="绑定窗口..." />
@@ -122,7 +166,6 @@ export default function ScriptNew() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">📦</span>
                 <RadioGroup defaultValue="new" className="flex items-center gap-3">
                   <div className="flex items-center gap-1">
                     <RadioGroupItem value="new" id="new" className="h-3 w-3" />
@@ -136,7 +179,6 @@ export default function ScriptNew() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">🤖</span>
                 <Select defaultValue="gpt4o">
                   <SelectTrigger className="h-8 w-32">
                     <SelectValue />
@@ -154,9 +196,9 @@ export default function ScriptNew() {
 
         {/* Right: Markdown Preview */}
         <div className="flex w-[40%] flex-col">
-          <div className="flex items-center gap-2 border-b px-6 py-2">
-            <span className="text-sm">📄</span>
+          <div className="flex items-center gap-2 border-b px-6 py-2 shrink-0">
             <span className="text-sm font-medium">脚本预览</span>
+            {isEdit && <span className="text-xs text-muted-foreground">{scriptName}</span>}
           </div>
           <ScrollArea className="flex-1 px-6 py-4">
             <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -169,4 +211,22 @@ export default function ScriptNew() {
       </div>
     </div>
   )
+}
+
+// buildMarkdown generates a markdown preview from a Script object
+function buildMarkdown(script: Script): string {
+  const steps = script.steps
+    .map(
+      (s, i) =>
+        `${i + 1}. **${s.action}** → "${s.target}"\n   - 目标OCR: \`${s.targetOCR}\`\n   - 置信度: ${Math.round(s.confidence * 100)}%${s.value ? `\n   - 值: \`${s.value}\`` : ''}`
+    )
+    .join('\n\n')
+
+  return `## ${script.name}\n\n**描述：** ${script.description}\n\n### 步骤\n\n${steps}\n${
+    Object.keys(script.variables).length > 0
+      ? `\n### 变量\n\n| 变量名 | 默认值 |\n|--------|--------|\n${Object.entries(script.variables)
+          .map(([k, v]) => `| ${k} | ${v} |`)
+          .join('\n')}`
+      : ''
+  }`
 }

@@ -2,9 +2,7 @@ package main
 
 import (
 	"embed"
-	"io/fs"
 	"log"
-	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/yc446833448/VisuTask/internal/action"
@@ -49,12 +47,15 @@ func main() {
 
 	visionEngine := vision.NewEngine(screenCapturer, ocrRecognizer, vision.NewStubDetector())
 
-	// Initialize action engine
+	// Initialize action engine (platform-specific: Windows=Win32API, macOS=CoreGraphics+AppleScript, other=stub)
 	actionEngine := action.NewEngine(
-		action.NewWinMouse(),
-		action.NewWinKeyboard(),
-		action.NewWinWindow(),
+		action.NewPlatformMouse(),
+		action.NewPlatformKeyboard(),
+		action.NewPlatformWindow(),
 	)
+
+	// On macOS, check and request Accessibility permissions
+	action.EnsureAccessibility()
 
 	monitorChecker := monitor.NewChecker(visionEngine)
 
@@ -80,26 +81,23 @@ func main() {
 	// Create agent service
 	agentService := agent.NewService(db, visionEngine, actionEngine, monitorChecker, gateway, concurrencyMgr, registry)
 
-	// Serve embedded frontend
-	frontendFS, err := fs.Sub(assets, "frontend/dist")
-	if err != nil {
-		log.Fatalf("failed to create frontend FS: %v", err)
-	}
-
 	// Create Wails application
 	app := application.New(application.Options{
 		Name:        "VisuTask",
 		Description: "GUI Automation Desktop App",
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
 		Services: []application.Service{
 			application.NewService(agentService),
 		},
 		Assets: application.AssetOptions{
-			Handler: http.FileServer(http.FS(frontendFS)),
+			Handler: application.BundledAssetFileServer(assets),
 		},
 	})
 
-	// Create main window
-	application.NewWindow(application.WebviewWindowOptions{
+	// Create main window (must use app.Window.NewWithOptions, NOT application.NewWindow)
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "VisuTask",
 		Width:     1024,
 		Height:    768,

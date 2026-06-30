@@ -7,6 +7,7 @@ require (
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.103
+	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 )
@@ -22,6 +23,7 @@ require (
 	github.com/jezek/xgb v1.3.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -29,5 +31,4 @@ require (
 	github.com/wailsapp/wails/webview2 v1.0.24 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

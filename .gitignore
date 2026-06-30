@@ -25,5 +25,5 @@ Thumbs.db
 config.yaml
 *.env
 
-# Wails build
-build/
+# Wails build output
+bin/

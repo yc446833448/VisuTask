@@ -1,3 +1,5 @@
+//go:build windows
+
 package action
 
 import (
@@ -8,7 +10,7 @@ import (
 
 var (
 	procKeybdEvent = user32.NewProc("keybd_event")
-	procSendInput = user32.NewProc("SendInput")
+	procSendInput  = user32.NewProc("SendInput")
 )
 
 const (
@@ -127,16 +129,6 @@ func needsShift(ch rune) bool {
 	return strings.ContainsRune("!@#$%^&*()_+{}|:\"<>?~", ch)
 }
 
-// hasCJK checks if the string contains CJK characters
-func hasCJK(s string) bool {
-	for _, r := range s {
-		if r > 0x2E80 {
-			return true
-		}
-	}
-	return false
-}
-
 // keyToVK maps key names to Windows Virtual Key codes
 func keyToVK(key string) uint16 {
 	switch strings.ToLower(key) {
@@ -208,3 +200,6 @@ func keyToVK(key string) uint16 {
 		return 0
 	}
 }
+
+// NewPlatformKeyboard returns the platform keyboard implementation
+func NewPlatformKeyboard() KeyboardController { return NewWinKeyboard() }

@@ -1,3 +1,5 @@
+//go:build windows
+
 package action
 
 import (
@@ -111,3 +113,6 @@ func containsIgnoreCase(s, substr string) bool {
 	substr = strings.ToLower(substr)
 	return strings.Contains(s, substr)
 }
+
+// NewPlatformWindow returns the platform window implementation
+func NewPlatformWindow() WindowController { return NewWinWindow() }

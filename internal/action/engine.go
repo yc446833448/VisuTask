@@ -58,3 +58,16 @@ type WindowController interface {
 	List() ([]model.WindowInfo, error)
 	Move(handle string, x, y int) error
 }
+
+// ─── Shared helpers ───
+
+// hasCJK checks if the string contains CJK (Chinese/Japanese/Korean) characters.
+// Used by both Windows and macOS keyboard implementations.
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if r > 0x2E80 {
+			return true
+		}
+	}
+	return false
+}
